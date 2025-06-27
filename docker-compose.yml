@@ -1,0 +1,605 @@
+version: '3.8'
+
+# 企业级微服务平台 - 完整部署配置
+# 包含所有8个微服务 + 基础设施组件
+
+services:
+  # ===========================================
+  # 基础设施服务
+  # ===========================================
+  
+  # PostgreSQL - 主数据库
+  postgres:
+    image: postgres:15-alpine
+    container_name: platform-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: platform_user
+      POSTGRES_PASSWORD: platform_password
+      POSTGRES_DB: platform_main
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-databases.sql:/docker-entrypoint-initdb.d/init-databases.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U platform_user -d platform_main"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Redis - 缓存和消息队列
+  redis:
+    image: redis:7-alpine
+    container_name: platform-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_password
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Elasticsearch - 日志搜索
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
+    container_name: platform-elasticsearch
+    restart: unless-stopped
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    ports:
+      - "9200:9200"
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # InfluxDB - 时序数据库
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: platform-influxdb
+    restart: unless-stopped
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=influx_password
+      - DOCKER_INFLUXDB_INIT_ORG=platform
+      - DOCKER_INFLUXDB_INIT_BUCKET=metrics
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=platform_influx_token
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    ports:
+      - "8086:8086"
+    networks:
+      - platform-network
+
+  # Consul - 服务发现
+  consul:
+    image: consul:1.16
+    container_name: platform-consul
+    restart: unless-stopped
+    command: consul agent -dev -client=0.0.0.0 -ui
+    ports:
+      - "8500:8500"
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "consul", "members"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ===========================================
+  # 监控和可观测性
+  # ===========================================
+
+  # Prometheus - 指标收集
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: platform-prometheus
+    restart: unless-stopped
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    volumes:
+      - ./config/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - platform-network
+    depends_on:
+      - consul
+
+  # Grafana - 可视化仪表板
+  grafana:
+    image: grafana/grafana:latest
+    container_name: platform-grafana
+    restart: unless-stopped
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=grafana_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+    ports:
+      - "3000:3000"
+    networks:
+      - platform-network
+    depends_on:
+      - prometheus
+
+  # Jaeger - 链路追踪
+  jaeger:
+    image: jaegertracing/all-in-one:latest
+    container_name: platform-jaeger
+    restart: unless-stopped
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "16686:16686"  # Jaeger UI
+      - "14268:14268"  # Jaeger collector
+    networks:
+      - platform-network
+
+  # ===========================================
+  # 核心微服务
+  # ===========================================
+
+  # API 网关服务
+  api-gateway:
+    build:
+      context: ./api-gateway-service
+      dockerfile: Dockerfile
+    container_name: platform-api-gateway
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=api-gateway-service
+      - SERVICE_PORT=3000
+      - SERVICE_ADMIN_PORT=3001
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/gateway_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - JWT_SECRET=jwt_secret_key_12345
+      - JWT_PUBLIC_KEY_PATH=/app/keys/jwt-public.pem
+      - JWT_PRIVATE_KEY_PATH=/app/keys/jwt-private.pem
+    ports:
+      - "3000:3000"   # 主服务端口
+      - "3001:3001"   # 管理端口
+    volumes:
+      - ./config/keys:/app/keys:ro
+      - ./logs/api-gateway:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 认证授权服务
+  auth-service:
+    build:
+      context: ./auth-service
+      dockerfile: Dockerfile
+    container_name: platform-auth-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=auth-service
+      - SERVICE_PORT=3101
+      - SERVICE_ADMIN_PORT=3102
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/auth_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - JWT_SECRET=jwt_secret_key_12345
+      - JWT_PRIVATE_KEY_PATH=/app/keys/jwt-private.pem
+      - JWT_PUBLIC_KEY_PATH=/app/keys/jwt-public.pem
+      - USER_SERVICE_URL=http://user-management-service:3201
+      - AUDIT_SERVICE_URL=http://audit-service:3601
+      - GITHUB_CLIENT_ID=${GITHUB_CLIENT_ID}
+      - GITHUB_CLIENT_SECRET=${GITHUB_CLIENT_SECRET}
+      - GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+    ports:
+      - "3101:3101"
+      - "3102:3102"
+    volumes:
+      - ./config/keys:/app/keys:ro
+      - ./logs/auth-service:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3102/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 用户管理服务
+  user-management-service:
+    build:
+      context: ./user-management-service
+      dockerfile: Dockerfile
+    container_name: platform-user-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=user-management-service
+      - SERVICE_PORT=3201
+      - SERVICE_ADMIN_PORT=3202
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/users_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - AUTH_SERVICE_URL=http://auth-service:3101
+      - TENANT_SERVICE_URL=http://tenant-management-service:3301
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3401
+      - AUDIT_SERVICE_URL=http://audit-service:3601
+      - FILE_STORAGE_SERVICE_URL=http://file-storage-service:3501
+    ports:
+      - "3201:3201"
+      - "3202:3202"
+    volumes:
+      - ./logs/user-service:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3202/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 多租户管理服务
+  tenant-management-service:
+    build:
+      context: ./tenant-management-service
+      dockerfile: Dockerfile
+    container_name: platform-tenant-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=tenant-management-service
+      - SERVICE_PORT=3301
+      - SERVICE_ADMIN_PORT=3302
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/tenants_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - USER_SERVICE_URL=http://user-management-service:3201
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3401
+      - AUDIT_SERVICE_URL=http://audit-service:3601
+      - MONITORING_SERVICE_URL=http://monitoring-service:3701
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET}
+    ports:
+      - "3301:3301"
+      - "3302:3302"
+    volumes:
+      - ./logs/tenant-service:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3302/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 消息通知服务
+  notification-service:
+    build:
+      context: ./notification-service
+      dockerfile: Dockerfile
+    container_name: platform-notification-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=notification-service
+      - SERVICE_PORT=3401
+      - SERVICE_ADMIN_PORT=3402
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/notifications_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - USER_SERVICE_URL=http://user-management-service:3201
+      - AUDIT_SERVICE_URL=http://audit-service:3601
+      # Email Configuration
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+      - SENDGRID_API_KEY=${SENDGRID_API_KEY}
+      # SMS Configuration
+      - ALIBABA_ACCESS_KEY_ID=${ALIBABA_ACCESS_KEY_ID}
+      - ALIBABA_ACCESS_KEY_SECRET=${ALIBABA_ACCESS_KEY_SECRET}
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN}
+      # Push Notification Configuration
+      - FCM_SERVER_KEY=${FCM_SERVER_KEY}
+      - APNS_KEY_ID=${APNS_KEY_ID}
+      - APNS_TEAM_ID=${APNS_TEAM_ID}
+    ports:
+      - "3401:3401"
+      - "3402:3402"
+    volumes:
+      - ./logs/notification-service:/app/logs
+      - ./config/apns:/app/config/apns:ro
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3402/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 文件存储服务
+  file-storage-service:
+    build:
+      context: ./file-storage-service
+      dockerfile: Dockerfile
+    container_name: platform-file-storage-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=file-storage-service
+      - SERVICE_PORT=3501
+      - SERVICE_ADMIN_PORT=3502
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/files_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - USER_SERVICE_URL=http://user-management-service:3201
+      - AUDIT_SERVICE_URL=http://audit-service:3601
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3401
+      # Storage Configuration
+      - STORAGE_DEFAULT_BACKEND=s3
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION}
+      - AWS_S3_BUCKET=${AWS_S3_BUCKET}
+      # Local Storage (fallback)
+      - STORAGE_LOCAL_PATH=/app/storage
+      # CDN Configuration
+      - CDN_DOMAIN=${CDN_DOMAIN}
+      - CDN_ENABLED=true
+      # File Processing
+      - MAX_FILE_SIZE=100MB
+      - ALLOWED_MIME_TYPES=image/*,video/*,application/pdf,application/msword
+    ports:
+      - "3501:3501"
+      - "3502:3502"
+    volumes:
+      - ./logs/file-storage-service:/app/logs
+      - file_storage_data:/app/storage
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3502/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 日志审计服务
+  audit-service:
+    build:
+      context: ./audit-service
+      dockerfile: Dockerfile
+    container_name: platform-audit-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=audit-service
+      - SERVICE_PORT=3601
+      - SERVICE_ADMIN_PORT=3602
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/audit_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - USER_SERVICE_URL=http://user-management-service:3201
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3401
+      # Compliance Configuration
+      - GDPR_ENABLED=true
+      - HIPAA_ENABLED=false
+      - DATA_RETENTION_DAYS=2555  # 7 years
+      - LOG_RETENTION_DAYS=90
+    ports:
+      - "3601:3601"
+      - "3602:3602"
+    volumes:
+      - ./logs/audit-service:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - elasticsearch
+      - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3602/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # 监控告警服务
+  monitoring-service:
+    build:
+      context: ./monitoring-service
+      dockerfile: Dockerfile
+    container_name: platform-monitoring-service
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - SERVICE_NAME=monitoring-service
+      - SERVICE_PORT=3701
+      - SERVICE_ADMIN_PORT=3702
+      - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/monitoring_db
+      - REDIS_URL=redis://:redis_password@redis:6379
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_TOKEN=platform_influx_token
+      - INFLUXDB_ORG=platform
+      - INFLUXDB_BUCKET=metrics
+      - PROMETHEUS_URL=http://prometheus:9090
+      - GRAFANA_URL=http://grafana:3000
+      - GRAFANA_API_KEY=${GRAFANA_API_KEY}
+      # 标准版本不使用Consul，使用Docker Compose内置网络发现
+      # - CONSUL_HOST=consul
+      # - CONSUL_PORT=8500
+      - INTERNAL_SERVICE_TOKEN=internal_shared_secret_token_12345
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3401
+      - AUDIT_SERVICE_URL=http://audit-service:3601
+      # Alerting Configuration
+      - ALERT_DEFAULT_COOLDOWN=300
+      - ALERT_EMAIL_ENABLED=true
+      - ALERT_WEBHOOK_ENABLED=true
+    ports:
+      - "3701:3701"
+      - "3702:3702"
+    volumes:
+      - ./logs/monitoring-service:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      # 标准版本不依赖InfluxDB和Consul
+      # - influxdb
+      - prometheus
+      # - consul
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3702/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ===========================================
+  # 可选组件
+  # ===========================================
+
+  # Nginx - 负载均衡和SSL终止
+  nginx:
+    image: nginx:alpine
+    container_name: platform-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - platform-network
+    depends_on:
+      - api-gateway
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # MinIO - S3兼容对象存储 (开发环境)
+  minio:
+    image: minio/minio:latest
+    container_name: platform-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  # elasticsearch_data:  # 企业版功能 - 标准版本使用PostgreSQL全文搜索
+  #   driver: local
+  # influxdb_data:      # 企业版功能 - 标准版本使用PostgreSQL时序扩展
+  #   driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+  file_storage_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  platform-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

@@ -1,0 +1,785 @@
+{
+  "routes": [
+    {
+      "id": "auth-routes",
+      "name": "认证授权路由",
+      "path": "/api/v1/auth/**",
+      "methods": ["GET", "POST", "PUT", "DELETE"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "auth-service-1",
+            "url": "http://auth-service:3101",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://yourdomain.com", "https://app.yourdomain.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 100,
+                "scope": "ip"
+              }
+            ],
+            "keyGenerator": {
+              "type": "ip"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 3,
+      "isActive": true,
+      "tags": ["auth", "public"]
+    },
+    {
+      "id": "user-routes",
+      "name": "用户管理路由",
+      "path": "/api/v1/users/**",
+      "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "user-service-1",
+            "url": "http://user-management-service:3201",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "authentication": {
+        "type": "jwt",
+        "required": true,
+        "config": {
+          "publicKey": "/app/keys/jwt-public.pem",
+          "algorithm": "RS256",
+          "issuer": "platform-auth-service",
+          "audience": "platform-api"
+        }
+      },
+      "authorization": {
+        "type": "rbac",
+        "config": {
+          "roles": ["user", "admin"],
+          "permissions": ["user:read", "user:write"]
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://yourdomain.com", "https://app.yourdomain.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 200,
+                "scope": "user"
+              }
+            ],
+            "keyGenerator": {
+              "type": "user"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 3,
+      "isActive": true,
+      "tags": ["users", "authenticated"]
+    },
+    {
+      "id": "tenant-routes",
+      "name": "多租户管理路由",
+      "path": "/api/v1/tenants/**",
+      "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "tenant-service-1",
+            "url": "http://tenant-management-service:3301",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "authentication": {
+        "type": "jwt",
+        "required": true,
+        "config": {
+          "publicKey": "/app/keys/jwt-public.pem",
+          "algorithm": "RS256",
+          "issuer": "platform-auth-service",
+          "audience": "platform-api"
+        }
+      },
+      "authorization": {
+        "type": "rbac",
+        "config": {
+          "roles": ["admin", "tenant_admin"],
+          "permissions": ["tenant:read", "tenant:write", "tenant:admin"]
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://yourdomain.com", "https://admin.yourdomain.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE", "PATCH"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 100,
+                "scope": "user"
+              }
+            ],
+            "keyGenerator": {
+              "type": "user"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 3,
+      "isActive": true,
+      "tags": ["tenants", "admin"]
+    },
+    {
+      "id": "notification-routes",
+      "name": "消息通知路由",
+      "path": "/api/v1/notifications/**",
+      "methods": ["GET", "POST", "PUT", "DELETE"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "notification-service-1",
+            "url": "http://notification-service:3401",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "authentication": {
+        "type": "jwt",
+        "required": true,
+        "config": {
+          "publicKey": "/app/keys/jwt-public.pem",
+          "algorithm": "RS256",
+          "issuer": "platform-auth-service",
+          "audience": "platform-api"
+        }
+      },
+      "authorization": {
+        "type": "rbac",
+        "config": {
+          "roles": ["user", "admin"],
+          "permissions": ["notification:read", "notification:write"]
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://yourdomain.com", "https://app.yourdomain.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "token_bucket",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 50,
+                "scope": "user"
+              }
+            ],
+            "keyGenerator": {
+              "type": "user"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 3,
+      "isActive": true,
+      "tags": ["notifications", "authenticated"]
+    },
+    {
+      "id": "file-storage-routes",
+      "name": "文件存储路由",
+      "path": "/api/v1/files/**",
+      "methods": ["GET", "POST", "PUT", "DELETE"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "file-storage-service-1",
+            "url": "http://file-storage-service:3501",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "authentication": {
+        "type": "jwt",
+        "required": true,
+        "config": {
+          "publicKey": "/app/keys/jwt-public.pem",
+          "algorithm": "RS256",
+          "issuer": "platform-auth-service",
+          "audience": "platform-api"
+        }
+      },
+      "authorization": {
+        "type": "rbac",
+        "config": {
+          "roles": ["user", "admin"],
+          "permissions": ["file:read", "file:write"]
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://yourdomain.com", "https://app.yourdomain.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 30,
+                "scope": "user"
+              }
+            ],
+            "keyGenerator": {
+              "type": "user"
+            }
+          }
+        }
+      ],
+      "timeout": 60000,
+      "retries": 2,
+      "isActive": true,
+      "tags": ["files", "authenticated"]
+    },
+    {
+      "id": "audit-routes",
+      "name": "日志审计路由",
+      "path": "/api/v1/audit/**",
+      "methods": ["GET", "POST"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "audit-service-1",
+            "url": "http://audit-service:3601",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "authentication": {
+        "type": "jwt",
+        "required": true,
+        "config": {
+          "publicKey": "/app/keys/jwt-public.pem",
+          "algorithm": "RS256",
+          "issuer": "platform-auth-service",
+          "audience": "platform-api"
+        }
+      },
+      "authorization": {
+        "type": "rbac",
+        "config": {
+          "roles": ["admin", "auditor"],
+          "permissions": ["audit:read", "audit:search"]
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://admin.yourdomain.com"],
+            "methods": ["GET", "POST"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 100,
+                "scope": "user"
+              }
+            ],
+            "keyGenerator": {
+              "type": "user"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 3,
+      "isActive": true,
+      "tags": ["audit", "admin"]
+    },
+    {
+      "id": "monitoring-routes",
+      "name": "监控告警路由",
+      "path": "/api/v1/monitoring/**",
+      "methods": ["GET", "POST", "PUT", "DELETE"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "monitoring-service-1",
+            "url": "http://monitoring-service:3701",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        },
+        "healthCheck": {
+          "enabled": true,
+          "interval": 30,
+          "timeout": 5,
+          "retries": 3
+        },
+        "circuitBreaker": {
+          "enabled": true,
+          "failureThreshold": 5,
+          "resetTimeout": 60000,
+          "monitoringPeriod": 10000
+        }
+      },
+      "authentication": {
+        "type": "jwt",
+        "required": true,
+        "config": {
+          "publicKey": "/app/keys/jwt-public.pem",
+          "algorithm": "RS256",
+          "issuer": "platform-auth-service",
+          "audience": "platform-api"
+        }
+      },
+      "authorization": {
+        "type": "rbac",
+        "config": {
+          "roles": ["admin", "operator"],
+          "permissions": ["monitoring:read", "monitoring:write"]
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["https://admin.yourdomain.com"],
+            "methods": ["GET", "POST", "PUT", "DELETE"],
+            "credentials": true
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 200,
+                "scope": "user"
+              }
+            ],
+            "keyGenerator": {
+              "type": "user"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 3,
+      "isActive": true,
+      "tags": ["monitoring", "admin"]
+    },
+    {
+      "id": "webhook-routes",
+      "name": "Webhook回调路由",
+      "path": "/api/v1/webhooks/**",
+      "methods": ["POST"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "tenant-service-webhook",
+            "url": "http://tenant-management-service:3301",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        }
+      },
+      "authentication": {
+        "type": "custom",
+        "required": true,
+        "config": {
+          "endpoint": "http://tenant-management-service:3301/internal/webhooks/verify",
+          "headers": {
+            "X-Service-Token": "internal_shared_secret_token_12345"
+          },
+          "timeout": 5000
+        }
+      },
+      "middleware": [
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 1000,
+                "scope": "ip"
+              }
+            ],
+            "keyGenerator": {
+              "type": "ip"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 1,
+      "isActive": true,
+      "tags": ["webhooks", "external"]
+    },
+    {
+      "id": "public-file-routes",
+      "name": "公共文件访问路由",
+      "path": "/public/files/**",
+      "methods": ["GET"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "file-storage-public",
+            "url": "http://file-storage-service:3501",
+            "weight": 100,
+            "healthCheckPath": "/health",
+            "isActive": true
+          }
+        ],
+        "loadBalancing": {
+          "algorithm": "round_robin"
+        }
+      },
+      "caching": {
+        "enabled": true,
+        "type": "redis",
+        "ttl": 3600,
+        "keyGenerator": {
+          "type": "simple",
+          "template": "public_file:${path}"
+        },
+        "conditions": [
+          {
+            "type": "method",
+            "operator": "equals",
+            "value": "GET"
+          },
+          {
+            "type": "status",
+            "operator": "equals",
+            "value": 200
+          }
+        ],
+        "headers": {
+          "etag": true,
+          "lastModified": true,
+          "cacheControl": "public, max-age=3600"
+        }
+      },
+      "middleware": [
+        {
+          "type": "cors",
+          "config": {
+            "origins": ["*"],
+            "methods": ["GET"],
+            "credentials": false
+          }
+        },
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 500,
+                "scope": "ip"
+              }
+            ],
+            "keyGenerator": {
+              "type": "ip"
+            }
+          }
+        }
+      ],
+      "timeout": 30000,
+      "retries": 2,
+      "isActive": true,
+      "tags": ["files", "public", "cached"]
+    },
+    {
+      "id": "health-check-routes",
+      "name": "健康检查路由",
+      "path": "/health",
+      "methods": ["GET"],
+      "backend": {
+        "type": "http",
+        "targets": [
+          {
+            "id": "gateway-health",
+            "url": "http://localhost:3001",
+            "weight": 100,
+            "isActive": true
+          }
+        ]
+      },
+      "middleware": [
+        {
+          "type": "rate_limit",
+          "config": {
+            "algorithm": "sliding_window",
+            "limits": [
+              {
+                "window": 60,
+                "limit": 60,
+                "scope": "ip"
+              }
+            ],
+            "keyGenerator": {
+              "type": "ip"
+            }
+          }
+        }
+      ],
+      "timeout": 5000,
+      "retries": 1,
+      "isActive": true,
+      "tags": ["health", "public"]
+    }
+  ],
+  "defaultRoute": {
+    "backend": {
+      "type": "static",
+      "response": {
+        "statusCode": 404,
+        "body": {
+          "error": {
+            "code": "ROUTE_NOT_FOUND",
+            "message": "The requested route was not found",
+            "timestamp": "${timestamp}",
+            "requestId": "${requestId}"
+          }
+        },
+        "headers": {
+          "Content-Type": "application/json"
+        }
+      }
+    }
+  },
+  "globalMiddleware": [
+    {
+      "type": "request_id",
+      "config": {
+        "header": "X-Request-ID",
+        "generator": "uuid"
+      }
+    },
+    {
+      "type": "audit_logging",
+      "config": {
+        "enabled": true,
+        "auditServiceUrl": "http://audit-service:3601/internal/events",
+        "includeBody": false,
+        "excludePaths": ["/health", "/metrics"]
+      }
+    },
+    {
+      "type": "security_headers",
+      "config": {
+        "hsts": true,
+        "noSniff": true,
+        "xssProtection": true,
+        "frameOptions": "DENY",
+        "contentSecurityPolicy": "default-src 'self'"
+      }
+    }
+  ],
+  "settings": {
+    "compression": {
+      "enabled": true,
+      "level": 6,
+      "threshold": 1024
+    },
+    "keepAlive": {
+      "enabled": true,
+      "timeout": 5000
+    },
+    "proxy": {
+      "timeout": 30000,
+      "retries": 3,
+      "retryDelay": 1000
+    },
+    "monitoring": {
+      "metricsEnabled": true,
+      "tracingEnabled": true,
+      "healthCheckInterval": 30000
+    }
+  }
+}
