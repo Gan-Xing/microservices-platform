@@ -6,10 +6,13 @@
 
 ### 🎯 标准版本定位
 - **存储规模**: 支持100TB文件存储，10万用户文件管理
-- **上传性能**: 支持大文件分片上传，并发上传优化
-- **存储方案**: 支持本地存储+对象存储，多重备份
+- **上传性能**: 支持大文件分片上传，并发上传优化 
+- **存储方案**: MinIO对象存储 + PostgreSQL元数据
 - **访问控制**: 细粒度权限控制，安全访问链接
 - **部署方式**: Docker Compose + MinIO对象存储
+- **服务优先级**: Week 3开发，复杂度⭐⭐⭐⭐ (10/12)
+- **依赖服务**: 认证服务(3001) + 权限服务(3002) + 用户服务(3003)
+- **内存分配**: 512MB (标准版本8GB总内存中的6.4%)
 
 ## 技术栈
 
@@ -17,7 +20,7 @@
 - **框架**: NestJS 10.x + TypeScript 5.x
 - **数据库**: PostgreSQL 15+ (元数据) + Redis 7+ (缓存)
 - **ORM**: Prisma ORM
-- **文件存储**: AWS S3 / 阿里云OSS / 腾讯云COS / 本地存储
+- **文件存储**: MinIO (S3兼容，标准版本推荐) / AWS S3 / 本地存储
 - **图片处理**: Sharp.js
 - **视频处理**: FFmpeg
 - **压缩**: Node.js zlib / 7zip
@@ -28,6 +31,8 @@
 - **CDN加速**: Nginx反向代理 + 缓存
 - **缓存策略**: Redis + 浏览器缓存
 - **备份策略**: 本地备份 + 定期归档
+- **消息队列**: Redis Streams (替代Kafka)
+- **部署方案**: Docker Compose (替代Kubernetes)
 
 ### 监控技术
 - **日志**: Winston
@@ -725,80 +730,243 @@ const storageConfig: StorageConfiguration = {
 }
 ```
 
+## 📋 项目规划 (标准版本)
+
+### 开发里程碑
+
+**Week 3 开发计划** (文件存储服务优先级: 10/12)
+
+#### 里程碑 1: 基础架构 (Week 3.1-3.2)
+- ✅ PostgreSQL表结构设计
+- ✅ MinIO对象存储集成
+- ✅ 基础CRUD API开发
+- ✅ 文件上传下载功能
+- 目标：基础文件管理功能可用
+
+#### 里程碑 2: 高级功能 (Week 3.3-3.4)
+- 🔄 分片上传支持
+- 🔄 权限控制集成
+- 🔄 媒体处理功能
+- 🔄 安全扫描集成
+- 目标：企业级功能完备
+
+#### 里程碑 3: 集成测试 (Week 3.5-3.6)
+- 🔄 与认证服务集成
+- 🔄 与权限服务集成
+- 🔄 性能测试和优化
+- 🔄 监控告警配置
+- 目标：生产就绪
+
+#### 里程碑 4: 部署上线 (Week 3.7)
+- 🔄 Docker Compose配置
+- 🔄 环境变量配置
+- 🔄 备份策略实施
+- 🔄 文档完善
+- 目标：生产环境部署
+
+### 内存分配策略
+
+**标准版本总内存预算: 8GB**
+
+| 组件 | 内存分配 | 占比 | 说明 |
+|------|---------|------|------|
+| 文件存储服务 | 512MB | 6.4% | 基础运行内存 |
+| MinIO对象存储 | 512MB | 6.4% | 对象存储引擎 |
+| PostgreSQL共享 | 2GB | 25% | 所有服务共享数据库 |
+| Redis共享 | 512MB | 6.4% | 缓存和会话存储 |
+| Nginx代理 | 128MB | 1.6% | 静态文件服务 |
+| 其他服务 | 4.3GB | 54.2% | 剩余11个微服务 |
+
+### 风险评估
+
+#### 技术风险 🔴
+- **大文件上传处理**: 分片上传复杂性，内存占用控制
+- **存储性能**: MinIO在单机环境下的性能表现
+- **缓解措施**: 使用流式处理，限制单文件大小，实施文件压缩
+
+#### 依赖风险 🟡
+- **认证服务依赖**: 文件权限控制依赖认证服务
+- **权限服务依赖**: 细粒度访问控制依赖RBAC服务
+- **缓解措施**: 实现降级模式，本地权限缓存
+
+#### 集成风险 🟡
+- **MinIO集成复杂性**: S3兼容API的配置和调试
+- **媒体处理性能**: Sharp/FFmpeg在容器环境的资源消耗
+- **缓解措施**: 详细的集成测试，性能基准测试
+
+#### 运维风险 🟢
+- **存储空间管理**: 100TB存储空间的监控和清理
+- **备份恢复**: 大文件备份策略的可靠性
+- **缓解措施**: 自动化清理任务，增量备份策略
+
+### 服务间交互设计
+
+#### 依赖关系图
+```
+文件存储服务 (3006)
+    ↓ 用户身份验证
+认证授权服务 (3001)
+    ↓ 权限检查
+权限管理服务 (3002)
+    ↓ 用户信息
+用户管理服务 (3003)
+    ↓ 审计日志
+日志审计服务 (3008)
+    ↓ 任务调度
+任务调度服务 (3009)
+```
+
+#### 内部API接口设计
+
+**服务间认证**: 使用X-Service-Token头部
+```typescript
+// 内部服务调用示例
+headers: {
+  'X-Service-Token': process.env.INTERNAL_SERVICE_TOKEN,
+  'X-Tenant-ID': tenantId,
+  'X-User-ID': userId
+}
+```
+
+**核心内部端点**:
+- `POST /internal/files/validate` - 验证文件权限
+- `GET /internal/files/{id}/metadata` - 获取文件元数据
+- `POST /internal/files/{id}/audit` - 记录访问日志
+- `GET /internal/files/usage/{tenantId}` - 获取租户存储使用量
+
 ## 部署方案
 
-### Docker 配置
-```yaml
-# k8s-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: file-storage-service
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: file-storage-service
-  template:
-    metadata:
-      labels:
-        app: file-storage-service
-    spec:
-      containers:
-      - name: file-storage-service
-        image: file-storage-service:latest
-        ports:
-        - containerPort: 3006
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: url
-        - name: REDIS_URL
-          valueFrom:
-            secretKeyRef:  
-              name: redis-secret
-              key: url
-        volumeMounts:
-        - name: storage-volume
-          mountPath: /app/storage
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 3006
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 3006
-          initialDelaySeconds: 5
-          periodSeconds: 5
-      volumes:
-      - name: storage-volume
-        persistentVolumeClaim:
-          claimName: file-storage-pvc
+### Docker Compose 配置 (标准版本)
 
----
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: file-storage-pvc
-spec:
-  accessModes:
-    - ReadWriteMany
-  resources:
-    requests:
-      storage: 100Gi
-  storageClassName: nfs-client
+```yaml
+# docker-compose.yml
+version: '3.8'
+
+services:
+  file-storage-service:
+    build:
+      context: ./file-storage-service
+      dockerfile: Dockerfile
+    container_name: file-storage-service
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_ENDPOINT=minio:9000
+      - MAX_FILE_SIZE=100MB
+      - ALLOWED_MIME_TYPES=image/*,video/*,application/pdf,text/*
+    volumes:
+      - file_storage_data:/app/storage
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    networks:
+      - platform-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # MinIO对象存储 (标准版本)
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - platform-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Nginx文件服务代理
+  nginx:
+    image: nginx:alpine
+    container_name: nginx-file-proxy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - file_storage_data:/var/www/files:ro
+    depends_on:
+      - file-storage-service
+    networks:
+      - platform-network
+
+volumes:
+  file_storage_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  platform-network:
+    external: true
+```
+
+### Nginx 配置
+```nginx
+# nginx/nginx.conf
+events {
+    worker_connections 1024;
+}
+
+http {
+    upstream file_storage {
+        server file-storage-service:3006;
+    }
+    
+    # 文件直接访问
+    server {
+        listen 80;
+        
+        # 静态文件服务
+        location /files/ {
+            alias /var/www/files/;
+            expires 1d;
+            add_header Cache-Control "public, immutable";
+        }
+        
+        # API代理
+        location /api/ {
+            proxy_pass http://file_storage;
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+            
+            # 大文件上传配置
+            client_max_body_size 100M;
+            proxy_read_timeout 300s;
+            proxy_send_timeout 300s;
+        }
+    }
+}
 ```
 
 ## 监控告警
@@ -943,4 +1111,49 @@ CDN_DOMAIN="https://cdn.yourdomain.com"
 CDN_ENABLED="true"
 ```
 
-这个文件存储服务将为整个微服务平台提供强大的文件管理能力，支持多种存储后端、媒体处理、安全扫描等企业级功能，满足各种文件存储和处理需求。
+### Docker Compose集成配置
+
+```yaml
+# 标准版本核心配置
+services:
+  file-storage-service:
+    # 服务发现: 使用服务名 file-storage-service:3006
+    networks:
+      - platform-network
+    depends_on:
+      - postgres      # 共享PostgreSQL实例
+      - redis         # 共享Redis实例
+      - minio         # 专用MinIO实例
+    # 健康检查集成
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+```
+
+### 监控集成 (Prometheus + Grafana)
+
+```typescript
+// 关键业务指标
+const fileStorageMetrics = {
+  // 存储使用量指标
+  storageUsed: new Gauge({
+    name: 'file_storage_used_bytes',
+    help: 'Total storage used by tenant',
+    labelNames: ['tenant_id']
+  }),
+  
+  // 上传性能指标
+  uploadLatency: new Histogram({
+    name: 'file_upload_duration_seconds',
+    help: 'File upload duration',
+    labelNames: ['file_size_range', 'storage_backend']
+  }),
+  
+  // 服务可用性指标
+  serviceHealth: new Gauge({
+    name: 'file_storage_service_up',
+    help: 'File storage service availability'
+  })
+}
+```
+
+这个文件存储服务将为整个微服务平台提供强大的文件管理能力，支持多种存储后端、媒体处理、安全扫描等企业级功能，完全符合标准版本的技术选型和性能要求。
