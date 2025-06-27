@@ -1,42 +1,95 @@
-# 监控告警服务开发文档 - 标准版本
+# 监控告警服务开发指南 - 标准版本
 
-## 服务概述
+## 📋 项目规划阶段 (Project Planning)
 
-监控告警服务是微服务平台的可观测性核心，面向**100租户+10万用户**的企业级生产系统，负责系统健康监控、性能指标收集、告警规则管理、SLA监控、可视化仪表板等功能，为整个平台提供全方位的监控和运维能力。
+### 项目计划制定
+**开发周期**: Week 4 (标准版本4周计划)
+**优先级**: ⭐⭐⭐⭐⭐ (最复杂服务，Week 4交付)
+**依赖关系**: 依赖全部11个服务已完成，作为监控中心
+**内存分配**: 1.5GB (总计8GB中的最大分配)
 
-### 🎯 标准版本定位
+### 里程碑设置
+- **Week 4.1**: 基础监控管理功能实现 (指标收集、健康检查)
+- **Week 4.2**: 告警管理和事件管理完成
+- **Week 4.3**: 面板管理和Prometheus/Grafana集成
+- **Week 4.4**: 异常检测和服务间监控集成
+- **Week 4.5**: 性能优化和生产环境测试
+- **Week 4.6**: 综合测试和部署验证
+
+### 资源分配
+- **端口**: 3007
+- **数据库**: 共享PostgreSQL实例 (monitoring_开头表)
+- **缓存**: 共享Redis实例 (专用监控命名空间)
+- **存储需求**: 500GB监控数据存储空间
+- **API端点**: 40个核心端点 (简化版)
+- **监控规模**: 100租户+12个微服务+基础设施
+
+### 风险评估
+- **技术风险**: Prometheus+Grafana集成复杂性 - 高风险
+- **依赖风险**: 需要监控所有11个服务 - 高风险
+- **集成风险**: 与每个服务的健康检查集成 - 高风险
+- **性能风险**: 每秒10万指标点处理 - 高风险
+- **时间风险**: Week 4最后交付，时间紧张 - 高风险
+
+---
+
+## 🎯 需求分析阶段 (Requirements Analysis)
+
+### 业务需求收集
+监控告警服务是微服务平台的可观测性核心，面向**100租户+10万用户**的企业级生产系统，负责系统健康监控、性能指标收集、告警规则管理、可视化仪表板等功能，为整个平台提供全方位的监控和运维能力。
+
+### 技术需求分析
 - **监控规模**: 监控100租户+12个微服务+基础设施
-- **API端点**: 55个端点，12个功能模块
-- **复杂度**: ⭐⭐⭐⭐⭐（最复杂服务）
-- **开发优先级**: Week 4
-- **服务端口**: 3007
 - **指标收集**: 每秒收集10万个监控指标点
 - **告警响应**: 秒级告警响应，智能告警聚合
-- **数据存储**: 支持1年监控数据存储和快速查询
+- **数据存储**: 支持90天监控数据存储和快速查询 (标准版本优化)
 - **部署方式**: Docker Compose + Prometheus + Grafana
 
-## 技术栈
+### 用户故事编写
+1. **系统管理员**: 需要监控整个平台的健康状态，设置告警规则，查看系统性能指标
+2. **运维人员**: 需要实时查看服务状态，处理告警事件，分析系统性能趋势
+3. **开发人员**: 需要查看应用性能指标，定位性能瓶颈，监控部署效果
+4. **租户管理员**: 需要查看租户级别的资源使用情况和性能指标
 
-### 后端技术 (标准版本)
-- **框架**: NestJS 10.x + TypeScript 5.x
-- **数据库**: PostgreSQL 15+ (配置数据 + 时序数据) + Redis 7+ (缓存)
-- **时序数据**: PostgreSQL时序扩展 + Prometheus
-- **ORM**: Prisma ORM
-- **消息队列**: Redis Streams (标准版本适用)
-- **指标收集**: Prometheus Client
+### 验收标准定义
+- **功能验收**: 12个功能模块100%实现，支持Prometheus+Grafana集成
+- **性能验收**: 支持每秒10万指标点，P95响应时间<100ms
+- **可靠性验收**: 99.9%服务可用性，告警响应时间<10秒
+- **集成验收**: 与所有11个微服务监控集成正常
 
-### 监控技术栈 (标准版本)
-- **指标存储**: Prometheus (单一指标存储)
-- **可视化**: Grafana
-- **告警管理**: Alertmanager
-- **服务发现**: Docker Compose服务发现
-- **链路追踪**: 简化链路追踪 (请求ID追踪)
-- **日志聚合**: Winston + PostgreSQL存储
+---
 
-### 数据分析 (标准版本简化)
-- **实时计算**: PostgreSQL + Redis (简化统计)
-- **异常检测**: 基于阈值的简单异常检测
-- **统计分析**: Node.js Statistics Libraries
+## 🏗️ 架构设计阶段 (Architecture Design)
+
+### 系统架构设计
+**标准版本监控架构** - 专注Prometheus+Grafana，避免过度复杂性：
+
+### 技术架构说明
+标准版本监控告警服务专为100租户+10万用户规模设计，选择最适合的技术栈：
+
+#### 标准版本技术选择 ✅
+- **指标存储**: Prometheus (适合标准版本监控规模)
+- **可视化**: Grafana (成熟的开源方案)
+- **告警管理**: Alertmanager (与Prometheus集成)
+- **配置存储**: PostgreSQL (复用现有数据库)
+- **缓存**: Redis (实时数据缓存)
+- **框架**: NestJS 10.x + TypeScript 5.x (统一技术栈)
+- **服务发现**: Docker Compose (避免Consul复杂性)
+
+#### 企业版本保留 ⭐ (未来扩展)
+- **InfluxDB**: 企业版时序数据库
+- **Elasticsearch**: 企业版日志分析
+- **Jaeger**: 企业版分布式链路追踪
+- **Kubernetes**: 企业版容器编排
+
+#### 移除过度复杂组件 ❌
+- **InfluxDB** → PostgreSQL时序扩展 (标准版本简化)
+- **Elasticsearch** → PostgreSQL全文搜索 (避免额外组件)
+- **Consul** → Docker Compose服务发现 (简化部署)
+- **Jaeger** → 简单请求ID追踪 (降低复杂度)
+
+### 数据库设计
+**PostgreSQL表结构** (共享数据库实例)：
 
 ## 核心功能模块
 
@@ -694,55 +747,49 @@ CREATE TABLE anomaly_detections (
 );
 ```
 
-### InfluxDB 数据结构 (时序数据)
-```typescript
-// InfluxDB 指标数据结构
-interface InfluxMetric {
-  measurement: string    // 指标名称
-  tags: {               // 标签 (索引字段)
-    service: string
-    instance?: string
-    tenant_id?: string
-    environment: string
-  }
-  fields: {             // 字段 (值)
-    value: number
-    [key: string]: number | string | boolean
-  }
-  timestamp: number     // 纳秒时间戳
-}
+### 服务间交互设计
+基于SERVICE_INTERACTION_SPEC.md，监控告警服务与其他服务的交互模式：
 
-// InfluxDB 查询示例
-const influxQueries = {
-  // CPU使用率查询
-  cpuUsage: `
-    SELECT mean("value") 
-    FROM "cpu_usage" 
-    WHERE "service" = 'user-service' 
-    AND time > now() - 1h 
-    GROUP BY time(5m), "instance"
-  `,
+#### 内部API接口 (服务间通信)
+```typescript
+// 内部服务调用 - 使用X-Service-Token认证
+interface InternalMonitoringAPI {
+  // 所有服务调用
+  'POST /internal/monitoring/metrics',        // 指标数据上报
+  'POST /internal/monitoring/health-status',  // 健康状态上报
+  'GET /internal/monitoring/service-health/{serviceId}', // 获取服务健康状态
   
-  // 响应时间分位数
-  responseTimePercentiles: `
-    SELECT percentile("value", 50) as p50,
-           percentile("value", 95) as p95,
-           percentile("value", 99) as p99
-    FROM "http_request_duration"
-    WHERE time > now() - 1h
-    GROUP BY time(1m)
-  `,
+  // 用户服务调用
+  'POST /internal/monitoring/user-activity',  // 用户活动指标
+  'GET /internal/monitoring/user-metrics',    // 用户相关监控数据
   
-  // 错误率计算
-  errorRate: `
-    SELECT sum("errors") / sum("requests") * 100 as error_rate
-    FROM (
-      SELECT count("value") as requests,
-             sum(CASE WHEN "status_code" >= 400 THEN 1 ELSE 0 END) as errors
-      FROM "http_requests_total"
-      WHERE time > now() - 5m
-  `
-};
+  // 认证服务调用
+  'POST /internal/monitoring/auth-events',    // 认证事件监控
+  'GET /internal/monitoring/auth-health',     // 认证服务健康检查
+  
+  // 消息队列服务调用
+  'POST /internal/monitoring/queue-metrics',  // 队列指标上报
+  'GET /internal/monitoring/queue-health',    // 队列健康状态
+  
+  // 审计服务调用
+  'POST /internal/monitoring/audit-events',   // 审计事件监控
+  'GET /internal/monitoring/compliance-status' // 合规状态检查
+}
+```
+
+#### 统一错误处理
+```typescript
+// 标准版本错误响应格式
+interface MonitoringError {
+  code: 'MONITORING_METRIC_INVALID' | 'MONITORING_SERVICE_UNAVAILABLE' | 'MONITORING_ALERT_FAILED';
+  message: string;
+  details?: any;
+  timestamp: string;
+}
+```
+
+### Prometheus集成配置
+**标准版本Prometheus配置** (Docker Compose环境)：
 ```
 
 ### Redis 数据结构
@@ -1382,111 +1429,241 @@ volumes:
   alertmanager_data:
 ```
 
-### Docker Compose 部署 (标准版本推荐)
+## 标准版本部署配置
+
+### Docker Compose配置
+**标准版本**: 共享基础设施 + Prometheus + Grafana
+
 ```yaml
-# docker-compose.yml 中的监控服务配置
-monitoring-service:
-  build:
-    context: ./monitoring-service
-    dockerfile: Dockerfile
-  container_name: platform-monitoring-service
-  restart: unless-stopped
-  environment:
-    - NODE_ENV=production
-    - DATABASE_URL=postgresql://platform_user:platform_password@postgres:5432/monitoring_db
-    - REDIS_URL=redis://:redis_password@redis:6379
-    - PROMETHEUS_URL=http://prometheus:9090
-    - GRAFANA_URL=http://grafana:3000
-  ports:
-    - "3007:3007"
-  volumes:
-    - ./logs/monitoring-service:/app/logs
-  networks:
-    - platform-network
-  depends_on:
-    - postgres
-    - redis
-    - prometheus
-  healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
-    interval: 30s
-    timeout: 10s
-    retries: 3
+# docker-compose.yml (项目根目录)
+version: '3.8'
+services:
+  monitoring-service:
+    build: ./monitoring-service
+    ports:
+      - "3007:3007"
+    environment:
+      # 共享数据库连接
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+      # 专用Redis命名空间
+      - REDIS_URL=redis://redis:6379/7  # 专用数据库7
+      # 监控组件连接
+      - PROMETHEUS_URL=http://prometheus:9090
+      - GRAFANA_URL=http://grafana:3000
+      - GRAFANA_TOKEN=${GRAFANA_TOKEN}
+      # 服务发现 (Docker Compose内置)
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - USER_SERVICE_URL=http://user-management-service:3003
+      - AUDIT_SERVICE_URL=http://audit-service:3008
+      - MESSAGE_QUEUE_URL=http://message-queue-service:3010
+      # 监控配置
+      - METRICS_RETENTION_DAYS=90
+      - ALERT_EVALUATION_INTERVAL=60
+      - HEALTH_CHECK_INTERVAL=30
+    depends_on:
+      - postgres
+      - redis
+      - prometheus
+      - grafana
+      - auth-service
+    networks:
+      - platform-network
+      
+  # Prometheus 监控
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+    volumes:
+      - ./monitoring-service/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    networks:
+      - platform-network
+      
+  # Grafana 可视化
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports:
+      - "3001:3000"  # 避免与服务端口冲突
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring-service/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - platform-network
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  
+networks:
+  platform-network:
+    driver: bridge
 ```
 
-### Kubernetes 部署 (企业版功能)
-```yaml
-# k8s-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: monitoring-service
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: monitoring-service
-  template:
-    metadata:
-      labels:
-        app: monitoring-service
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "3008"
-        prometheus.io/path: "/metrics"
-    spec:
-      containers:
-      - name: monitoring-service
-        image: monitoring-service:latest
-        ports:
-        - containerPort: 3008
-          name: http
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: url
-        - name: INFLUXDB_URL
-          valueFrom:
-            configMapKeyRef:
-              name: monitoring-config
-              key: influxdb-url
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 3008
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 3008
-          initialDelaySeconds: 5
-          periodSeconds: 5
+### 环境变量配置
+```env
+# 标准版本环境变量
+NODE_ENV=production
+PORT=3007
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: monitoring-service
-  labels:
-    app: monitoring-service
-spec:
-  selector:
-    app: monitoring-service
-  ports:
-    - port: 80
-      targetPort: 3008
-      name: http
-  type: ClusterIP
+# 共享数据库
+DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+
+# 专用Redis命名空间
+REDIS_URL=redis://redis:6379/7
+REDIS_KEY_PREFIX=monitoring:
+
+# 监控组件
+PROMETHEUS_URL=http://prometheus:9090
+GRAFANA_URL=http://grafana:3000
+GRAFANA_TOKEN=your-grafana-api-token
+
+# 服务间通信
+INTERNAL_SERVICE_TOKEN=your-internal-service-token
+SERVICE_DISCOVERY_MODE=docker-compose
+
+# 监控配置 (标准版本优化)
+METRICS_RETENTION_DAYS=90     # 90天数据保留
+METRICS_SCRAPE_INTERVAL=15    # 15秒采集间隔
+ALERT_EVALUATION_INTERVAL=60  # 60秒告警评估
+HEALTH_CHECK_INTERVAL=30      # 30秒健康检查
+MAX_METRIC_POINTS=100000      # 最大指标点数
+
+# 性能配置
+METRICS_BATCH_SIZE=1000       # 批量处理大小
+METRICS_BUFFER_SIZE=10000     # 缓冲区大小
+GRAFANA_PANEL_CACHE_TTL=300   # 面板缓存5分钟
+```
+```
+
+### 健康检查集成
+```typescript
+@Controller('/health')
+export class HealthController {
+  constructor(
+    private readonly prometheus: PrometheusService,
+    private readonly grafana: GrafanaService,
+    private readonly prisma: PrismaService,
+    private readonly redis: Redis
+  ) {}
+  
+  @Get()
+  async healthCheck(): Promise<HealthStatus> {
+    const checks = await Promise.allSettled([
+      this.checkPrometheus(),
+      this.checkGrafana(),
+      this.checkDatabase(),
+      this.checkRedis()
+    ]);
+    
+    const status = checks.every(check => 
+      check.status === 'fulfilled' && check.value.healthy
+    ) ? 'healthy' : 'unhealthy';
+    
+    return {
+      service: 'monitoring-service',
+      status,
+      timestamp: new Date(),
+      checks: {
+        prometheus: checks[0].status === 'fulfilled' ? checks[0].value : { healthy: false },
+        grafana: checks[1].status === 'fulfilled' ? checks[1].value : { healthy: false },
+        database: checks[2].status === 'fulfilled' ? checks[2].value : { healthy: false },
+        redis: checks[3].status === 'fulfilled' ? checks[3].value : { healthy: false }
+      },
+      metrics: {
+        activeAlerts: await this.getActiveAlertsCount(),
+        metricsPerSecond: await this.getMetricsRate(),
+        grafanaDashboards: await this.getDashboardCount()
+      }
+    };
+  }
+  
+  private async checkPrometheus(): Promise<{ healthy: boolean; details?: any }> {
+    try {
+      const response = await fetch(`${process.env.PROMETHEUS_URL}/api/v1/query?query=up`);
+      const data = await response.json();
+      return { 
+        healthy: response.ok && data.status === 'success',
+        details: { targets: data.data?.result?.length || 0 }
+      };
+    } catch (error) {
+      return { healthy: false, details: { error: error.message } };
+    }
+  }
+  
+  private async checkGrafana(): Promise<{ healthy: boolean; details?: any }> {
+    try {
+      const response = await fetch(`${process.env.GRAFANA_URL}/api/health`);
+      return { 
+        healthy: response.ok,
+        details: { status: response.status }
+      };
+    } catch (error) {
+      return { healthy: false, details: { error: error.message } };
+    }
+  }
+}
+```
+
+### Prometheus配置文件
+```yaml
+# monitoring-service/prometheus.yml
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  # 监控服务自身
+  - job_name: 'monitoring-service'
+    static_configs:
+      - targets: ['monitoring-service:3007']
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    
+  # 所有微服务
+  - job_name: 'microservices'
+    static_configs:
+      - targets: 
+        - 'api-gateway-service:3000'
+        - 'auth-service:3001'
+        - 'rbac-service:3002'
+        - 'user-management-service:3003'
+        - 'tenant-management-service:3004'
+        - 'notification-service:3005'
+        - 'file-storage-service:3006'
+        - 'audit-service:3008'
+        - 'scheduler-service:3009'
+        - 'message-queue-service:3010'
+        - 'cache-service:3011'
+    metrics_path: '/metrics'
+    scrape_interval: 15s
+    
+  # 基础设施监控
+  - job_name: 'infrastructure'
+    static_configs:
+      - targets:
+        - 'postgres:5432'
+        - 'redis:6379'
+    scrape_interval: 30s
+
+rule_files:
+  - "alert_rules.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - 'alertmanager:9093'
+```
 ```
 
 ## 开发指南
@@ -1556,4 +1733,52 @@ export default {
 }
 ```
 
-这个监控告警服务将为整个微服务平台提供全面的可观测性能力，包括指标收集、健康监控、告警管理、SLA跟踪等功能，确保系统的可靠性和性能。
+---
+
+## 📊 开发阶段完成情况总结
+
+### 1.1 需求分析阶段 ✅ 已完成
+- ✅ 业务需求收集：明确监控告警服务作为可观测性核心的职责范围
+- ✅ 技术需求分析：定义100租户+10万用户+12个微服务监控规模
+- ✅ 用户故事编写：覆盖系统管理员、运维人员、开发人员、租户管理员使用场景
+- ✅ 验收标准定义：功能、性能、可靠性、集成四个维度标准
+- ✅ 架构设计文档：基于Prometheus+Grafana的标准版本架构
+
+### 1.2 项目规划阶段 ✅ 已完成
+- ✅ 项目计划制定：Week 4开发计划，优先级⭐⭐⭐⭐⭐(最复杂服务)
+- ✅ 里程碑设置：6个明确的周级里程碑和交付节点
+- ✅ 资源分配：端口3007、1.5GB内存、500GB存储、40个API端点
+- ✅ 风险评估：技术、依赖、集成、性能、时间五个维度高风险分析
+- ✅ 技术栈选择：Prometheus+Grafana+PostgreSQL+Redis，符合标准版本要求
+
+### 1.3 架构设计阶段 ✅ 已完成
+- ✅ 系统架构设计：标准版本监控架构，移除InfluxDB/Elasticsearch复杂性
+- ✅ 数据库设计：完整的PostgreSQL表结构设计(7个核心监控表)
+- ✅ API设计：40个RESTful接口，涵盖12个功能模块
+- ✅ 安全架构设计：服务间认证、监控数据权限控制、告警安全
+- ✅ 性能规划：针对每秒10万指标点的批量处理和缓存优化
+
+## 🚀 主要改进点
+
+### 技术栈标准化
+1. **移除过度复杂性**：InfluxDB→PostgreSQL时序扩展，Elasticsearch→PostgreSQL全文搜索
+2. **统一基础设施**：共享PostgreSQL和Redis实例，降低运维复杂度
+3. **Docker Compose优化**：集成Prometheus+Grafana，避免K8S过度设计
+
+### 服务间集成增强
+1. **内部API设计**：定义与所有11个微服务的监控数据交互接口
+2. **统一健康检查**：标准化健康检查格式和服务状态上报机制
+3. **告警集成**：与通知服务(3005)集成实现统一告警通知
+
+### 标准版本适配
+1. **监控规模明确**：100租户+12个微服务+基础设施监控
+2. **资源配置优化**：1.5GB内存分配，适合8GB总内存限制
+3. **数据保留策略**：90天监控数据，平衡存储成本和查询需求
+4. **部署简化**：单一Docker Compose文件，包含完整监控栈
+
+### 开发路径明确
+1. **Week 4交付计划**：6个具体里程碑和技术实现路径
+2. **依赖关系清晰**：作为最后交付的服务，依赖所有前置服务
+3. **集成测试重点**：与11个微服务的监控集成验证
+
+通过标准版本优化，监控告警服务现在具备了生产级别的架构设计、明确的开发路径和完整的监控能力，能够在Week 4高质量交付整个平台的可观测性核心功能。
