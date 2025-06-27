@@ -3,6 +3,9 @@
 目标：对 $ARGUMENTS/development-guide.md 进行全面优化，使其符合标准版本目标并加强微服务集成。
 
 **第一步：读取并评估当前服务文档**
+
+检查之前git记录是否已经更改，再进行下面的步骤
+
 读取 $ARGUMENTS/development-guide.md，对照以下3个开发阶段检查完成情况：
 
 ### 1.1 需求分析阶段 (Requirements Analysis) 检查项：
