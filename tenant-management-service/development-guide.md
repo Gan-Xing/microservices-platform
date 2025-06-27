@@ -11,22 +11,31 @@
 - **隔离等级**: 数据库级隔离，确保租户数据安全
 - **部署方式**: Docker Compose，支持租户独立部署
 
-## 技术栈
+## 技术栈 (标准版本优化)
 
 ### 后端技术
 - **框架**: NestJS 10.x + TypeScript 5.x
-- **数据库**: PostgreSQL 15+ (租户元数据) + Redis 7+ (配置缓存)
-- **ORM**: Prisma ORM
-- **队列**: Bull Queue (Redis)
+- **数据库**: PostgreSQL 15+ (租户元数据+全文搜索+时序数据)
+- **缓存/队列**: Redis 7+ (配置缓存+会话+消息队列)
+- **ORM**: Prisma ORM (类型安全数据库访问)
+- **消息队列**: Redis Streams (替代Kafka)
 - **计费**: Stripe API + 自定义计费引擎
-- **配置**: Redis + 环境变量 (标准版本简化配置)
-- **企业版功能**: Consul + etcd (企业版保留)
+- **配置管理**: Redis + 环境变量
+- **监控**: Prometheus + Grafana集成
+
+### 标准版本移除组件
+- ❌ Consul/etcd → ✅ Redis配置存储
+- ❌ Kubernetes → ✅ Docker Compose
+- ❌ Kafka → ✅ Redis Streams
+- ❌ Elasticsearch → ✅ PostgreSQL全文搜索
 
 ### 架构模式 (标准版本)
 - **数据隔离**: Shared Database + Row Level Security (适合100租户)
 - **应用隔离**: Shared Container + 租户上下文隔离
-- **网络隔离**: Docker网络隔离 + 访问控制
-- **存储隔离**: 逻辑隔离 + 权限控制 (无需物理隔离)
+- **网络隔离**: Docker Compose网络 + 服务发现
+- **存储隔离**: 逻辑隔离 + PostgreSQL RLS权限控制
+- **服务通信**: 通过API网关(3000) + 内部API(/internal/*)
+- **部署方式**: Docker Compose单机或8GB内存小集群
 
 ## 核心功能模块
 
@@ -532,27 +541,274 @@ export class TenantConnectionManager {
 - 跨租户访问尝试
 - 配额超限告警
 
+## 🗓️ 项目规划 (标准版本4周计划)
+
+### Week 1: 基础架构 (第5优先级)
+多租户管理服务在Week 2启动，依赖用户管理服务(Week 1)完成。
+
+**里程碑1**: 多租户核心架构
+- 租户CRUD操作 (2天)
+- 数据库schema设计和RLS策略 (1天)
+- 租户上下文中间件 (1天)
+- 基础API端点测试 (1天)
+
+### Week 2: 核心功能开发
+**里程碑2**: 租户生命周期管理
+- 租户创建/删除流程 (2天)
+- 配置管理系统 (2天)
+- 资源配额管理 (1天)
+
+### Week 3: 高级功能
+**里程碑3**: 计费与权限系统
+- Stripe集成和订阅管理 (2天)
+- 租户权限和特性开关 (2天)
+- 性能优化和缓存策略 (1天)
+
+### Week 4: 测试与部署
+**里程碑4**: 生产就绪
+- 集成测试和性能测试 (2天)
+- 监控指标和健康检查 (1天)
+- Docker Compose配置优化 (1天)
+- 文档完善 (1天)
+
+### 📊 资源分配 (8GB内存预算)
+- **租户管理服务**: 1.2GB内存分配
+- **PostgreSQL连接池**: 20个连接 (共享)
+- **Redis缓存**: 200MB (租户配置缓存)
+- **Docker容器**: 1个实例，支持水平扩展
+
+### ⚠️ 风险评估
+**技术风险**:
+- 多租户数据隔离复杂性 - 通过PostgreSQL RLS缓解
+- Stripe计费集成复杂度 - 分阶段实现，先支付后高级功能
+- 性能瓶颈 - Redis缓存+连接池优化
+
+**依赖风险**:
+- 依赖用户管理服务(3003)认证 - 并行开发，接口优先定义
+- 依赖API网关(3000)路由 - 使用Docker Compose网络临时方案
+- 依赖权限管理服务(3002) - 内置基础权限，后期集成
+
+**集成风险**:
+- 跨服务数据一致性 - 事件驱动架构+补偿事务
+- 服务启动顺序依赖 - Docker Compose健康检查+重试机制
+
+## 🔗 服务间交互设计
+
+### 依赖服务关系
+```mermaid
+graph TD
+    A[API网关 3000] --> B[租户管理服务 3004]
+    B --> C[用户管理服务 3003]
+    B --> D[权限管理服务 3002]
+    B --> E[审计服务 3008]
+    B --> F[通知服务 3005]
+    B --> G[缓存服务 3011]
+```
+
+### 内部API接口设计
+```typescript
+// 供其他服务调用的内部API
+// 认证: X-Service-Token
+GET    /internal/tenants/{id}/context     // 获取租户上下文
+GET    /internal/tenants/{id}/features    // 获取租户功能特性
+POST   /internal/tenants/{id}/usage      // 记录资源使用量
+GET    /internal/tenants/{id}/quotas     // 检查配额限制
+POST   /internal/tenants/validate        // 验证租户有效性
+```
+
+### 对外服务调用
+```typescript
+// 调用其他服务的API
+// 用户管理服务 (3003)
+GET    /internal/users/{id}/tenant-info   
+POST   /internal/users/batch-update-tenant
+
+// 权限管理服务 (3002)
+POST   /internal/permissions/tenant-roles
+GET    /internal/permissions/tenant-policies
+
+// 审计服务 (3008)
+POST   /internal/audit/tenant-events
+
+// 通知服务 (3005)
+POST   /internal/notifications/tenant-events
+```
+
+### 统一错误处理
+```typescript
+// 服务间调用错误处理
+@Injectable()
+export class ServiceInteractionGuard {
+  async callInternalService(service: string, endpoint: string, data?: any) {
+    const maxRetries = 3;
+    const backoffMs = [1000, 2000, 4000];
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        return await this.httpService.request({
+          url: `http://${service}:${this.getServicePort(service)}${endpoint}`,
+          headers: { 'X-Service-Token': this.serviceToken },
+          data,
+          timeout: 5000
+        }).toPromise();
+      } catch (error) {
+        if (attempt === maxRetries - 1) throw error;
+        await this.delay(backoffMs[attempt]);
+      }
+    }
+  }
+}
+```
+
+## 🐳 Docker Compose配置优化
+
+### 服务定义
+```yaml
+version: '3.8'
+services:
+  tenant-management-service:
+    build:
+      context: .
+      dockerfile: apps/tenant-management-service/Dockerfile
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+      - REDIS_URL=redis://redis:6379/2
+      - SERVICE_PORT=3004
+      - SERVICE_NAME=tenant-management-service
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1.2G
+        reservations:
+          memory: 800M
+    restart: unless-stopped
+
+  # 共享PostgreSQL实例
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: platform
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-tenant-db.sql:/docker-entrypoint-initdb.d/01-tenant.sql
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 共享Redis实例
+  redis:
+    image: redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  platform-network:
+    driver: bridge
+```
+
+### 服务发现配置
+```typescript
+// Docker Compose网络内服务发现
+@Injectable()
+export class ServiceDiscovery {
+  private serviceEndpoints = {
+    'api-gateway': 'http://api-gateway:3000',
+    'auth-service': 'http://auth-service:3001',
+    'permission-service': 'http://permission-service:3002',
+    'user-management-service': 'http://user-management-service:3003',
+    'notification-service': 'http://notification-service:3005',
+    'audit-service': 'http://audit-service:3008',
+    'cache-service': 'http://cache-service:3011'
+  };
+  
+  getServiceUrl(serviceName: string): string {
+    return this.serviceEndpoints[serviceName] || 
+           `http://${serviceName}:${this.getDefaultPort(serviceName)}`;
+  }
+}
+```
+
 ## 部署配置
 
-### 环境变量
+### 环境变量 (标准版本)
 ```env
-# 数据库配置
+# 服务配置
+SERVICE_NAME=tenant-management-service
+SERVICE_PORT=3004
+NODE_ENV=production
+
+# 数据库配置 (共享PostgreSQL)
+DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
 TENANT_DB_POOL_SIZE=20
 TENANT_DB_TIMEOUT=2000
-SHARED_DB_URL=postgresql://user:pass@localhost:5432/platform_shared
+TENANT_DB_MAX_CONNECTIONS=50
 
-# Stripe 集成
+# Redis配置 (共享实例)
+REDIS_URL=redis://redis:6379/2
+REDIS_TENANT_CONFIG_TTL=1800  # 30分钟
+REDIS_CONNECTION_POOL_SIZE=10
+
+# 服务间认证
+SERVICE_TOKEN=tenant-mgmt-secret-token-2024
+INTERNAL_API_TIMEOUT=5000
+
+# Stripe集成 (标准版本)
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
+STRIPE_CONNECT_ENABLED=false  # 标准版本简化
 
-# 配额设置
+# 配额设置 (标准版本默认值)
 DEFAULT_USER_QUOTA=100
 DEFAULT_STORAGE_QUOTA=10737418240  # 10GB
 DEFAULT_API_QUOTA=10000
+DEFAULT_BANDWIDTH_QUOTA=107374182400  # 100GB
 
 # 计费配置
 BILLING_CYCLE_DAY=1
 USAGE_CALCULATION_TIMEZONE=UTC
+USAGE_BILLING_ENABLED=true
+
+# 监控配置
+PROMETHEUS_ENABLED=true
+METRICS_PORT=9464
+HEALTH_CHECK_INTERVAL=30000
+
+# Docker Compose网络
+SERVICE_DISCOVERY_MODE=docker-compose
+NETWORK_NAME=platform-network
 ```
 
 ### 数据库迁移
