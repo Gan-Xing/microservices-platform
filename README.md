@@ -309,9 +309,8 @@ graph TB
 ### 监控服务端口
 - **9090**: Prometheus (指标收集)
 - **9091**: Grafana (监控面板)
-- **9200**: Elasticsearch (日志搜索)
-- **5601**: Kibana (日志分析界面)
-- **8500**: Consul (服务发现)
+- **5432**: PostgreSQL (日志存储)
+- **6379**: Redis (缓存和会话)
 
 ## 技术栈选择
 
@@ -322,10 +321,8 @@ graph TB
   - 强类型支持，降低运行时错误
 
 - **数据库**: 
-  - PostgreSQL 15+ (主数据存储)
+  - PostgreSQL 15+ (主数据存储、日志存储、时序数据)
   - Redis 7+ (缓存、会话、消息队列)
-  - Elasticsearch 8.x (日志搜索)
-  - InfluxDB 2.x (时序数据)
 
 - **ORM**: Prisma ORM
   - 类型安全的数据库访问
@@ -340,9 +337,8 @@ graph TB
 
 ### 监控与可观测性
 - **指标**: Prometheus + Grafana
-- **日志**: ELK Stack (Elasticsearch + Logstash + Kibana)
-- **链路追踪**: Jaeger / Zipkin
-- **告警**: Alertmanager
+- **日志**: PostgreSQL + 自建日志查询界面
+- **告警**: Prometheus Alertmanager
 
 ### 安全与合规
 - **认证**: JWT (RS256) + OAuth 2.0
@@ -376,7 +372,7 @@ docker-compose -f docker-compose.prod.yml up -d
 - 💾 **数据持久化**: Docker Volume存储管理
 - 🔒 **配置管理**: 环境变量 + .env文件
 - 🌐 **服务发现**: Docker Compose内置网络
-- 📊 **资源监控**: Prometheus + Grafana + PostgreSQL
+- 📊 **资源监控**: Prometheus + Grafana (指标) + PostgreSQL (日志)
 
 ## 数据流架构
 
@@ -422,7 +418,7 @@ git clone <project-url>
 cd platform
 
 # 2. 启动基础设施
-docker-compose up -d postgres redis elasticsearch influxdb
+docker-compose up -d postgres redis
 
 # 3. 启动各个服务
 cd api-gateway-service && npm install && npm run start:dev &
