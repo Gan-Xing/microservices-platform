@@ -15,12 +15,11 @@
 
 ### 后端技术 (标准版本)
 - **框架**: NestJS 10.x + TypeScript 5.x
-- **数据库**: PostgreSQL 15+ (审计数据 + 全文搜索) + Redis 7+ (缓存)
+- **数据库**: PostgreSQL 15+ (审计数据 + 全文搜索 + 时序数据) + Redis 7+ (缓存)
 - **搜索引擎**: PostgreSQL全文搜索 (标准版本适用)
 - **消息队列**: Redis Streams (标准版本选择)
 - **ORM**: Prisma ORM
 - **日志处理**: Winston + PostgreSQL存储
-- **企业版功能**: ClickHouse + Elasticsearch (企业版保留)
 
 ### 分析技术 (标准版本)
 - **实时分析**: PostgreSQL窗口函数 + Redis统计
@@ -33,7 +32,6 @@
 - **指标监控**: Prometheus + Grafana
 - **链路追踪**: Winston结构化日志 + 请求ID追踪
 - **健康检查**: NestJS Health Check
-- **企业版功能**: ELK Stack + Jaeger (企业版保留)
 
 ## 核心功能模块
 
@@ -283,7 +281,7 @@ interface AlertRule {
   id: string
   name: string
   description: string
-  query: string  // Elasticsearch query or SQL
+  query: string  // PostgreSQL SQL query for standard version
   condition: AlertCondition
   severity: 'info' | 'warning' | 'error' | 'critical'
   channels: NotificationChannel[]
@@ -482,52 +480,55 @@ CREATE TABLE alerts (
 );
 ```
 
-### ClickHouse 表结构 (日志分析)
+### PostgreSQL 日志表结构 (标准版本)
 ```sql
--- 系统日志表 (ClickHouse)
+-- 系统日志表 (PostgreSQL)
 CREATE TABLE system_logs (
-  id String,
-  tenant_id String,
-  service String,
-  level String,
-  message String,
-  timestamp DateTime,
-  context String,  -- JSON string
-  exception String,  -- JSON string  
-  request_id String,
-  correlation_id String,
-  user_id String,
-  metadata String,  -- JSON string
-  date Date MATERIALIZED toDate(timestamp)
-) ENGINE = MergeTree()
-PARTITION BY toYYYYMM(timestamp)
-ORDER BY (service, level, timestamp)
-SETTINGS index_granularity = 8192;
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID,
+  service VARCHAR(100) NOT NULL,
+  level VARCHAR(20) NOT NULL,
+  message TEXT NOT NULL,
+  timestamp TIMESTAMP NOT NULL DEFAULT NOW(),
+  context JSONB,
+  exception JSONB,
+  request_id VARCHAR(255),
+  correlation_id VARCHAR(255),
+  user_id UUID,
+  metadata JSONB DEFAULT '{}',
+  
+  INDEX idx_system_logs_service_time (service, timestamp),
+  INDEX idx_system_logs_level_time (level, timestamp),
+  INDEX idx_system_logs_tenant_time (tenant_id, timestamp),
+  INDEX idx_system_logs_correlation (correlation_id)
+);
 
--- 日志统计视图
-CREATE MATERIALIZED VIEW log_stats_mv
-TO log_stats
-AS SELECT
-  service,
-  level,
-  toStartOfHour(timestamp) as hour,
-  count() as count,
-  uniqExact(user_id) as unique_users
-FROM system_logs
-GROUP BY service, level, hour;
+-- 日志统计表 (使用PostgreSQL代替ClickHouse)
+CREATE TABLE log_statistics (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  service VARCHAR(100) NOT NULL,
+  level VARCHAR(20) NOT NULL,
+  hour_bucket TIMESTAMP NOT NULL,
+  count INTEGER NOT NULL,
+  unique_users INTEGER NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  
+  UNIQUE(service, level, hour_bucket)
+);
 
 -- 错误日志聚合表
 CREATE TABLE error_aggregations (
-  service String,
-  error_type String,
-  error_message String,
-  count UInt64,
-  first_seen DateTime,
-  last_seen DateTime,
-  date Date
-) ENGINE = SummingMergeTree(count)
-PARTITION BY toYYYYMM(date)
-ORDER BY (service, error_type, date);
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  service VARCHAR(100) NOT NULL,
+  error_type VARCHAR(100) NOT NULL,
+  error_message TEXT NOT NULL,
+  count INTEGER NOT NULL DEFAULT 1,
+  first_seen TIMESTAMP NOT NULL,
+  last_seen TIMESTAMP NOT NULL,
+  date_bucket DATE NOT NULL,
+  
+  UNIQUE(service, error_type, error_message, date_bucket)
+);
 ```
 
 ### Redis 数据结构
@@ -981,15 +982,9 @@ services:
     environment:
       - DATABASE_URL=postgresql://user:pass@postgres:5432/audit_db
       - REDIS_URL=redis://redis:6379
-      - ELASTICSEARCH_URL=http://elasticsearch:9200
-      - CLICKHOUSE_URL=http://clickhouse:8123
-      - KAFKA_BROKERS=kafka:9092
     depends_on:
       - postgres
       - redis
-      - elasticsearch
-      - clickhouse
-      - kafka
     volumes:
       - ./logs:/app/logs
 
@@ -1007,110 +1002,12 @@ services:
     volumes:
       - redis_data:/data
 
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.0
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-    volumes:
-      - elasticsearch_data:/usr/share/elasticsearch/data
-
-  clickhouse:
-    image: yandex/clickhouse-server:latest
-    ports:
-      - "8123:8123"
-      - "9009:9009"
-    volumes:
-      - clickhouse_data:/var/lib/clickhouse
-
-  kafka:
-    image: confluentinc/cp-kafka:latest
-    environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-    depends_on:
-      - zookeeper
-
-  zookeeper:
-    image: confluentinc/cp-zookeeper:latest
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
 
 volumes:
   postgres_data:
   redis_data:
-  elasticsearch_data:
-  clickhouse_data:
 ```
 
-### Kubernetes 部署
-```yaml
-# k8s-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: audit-service
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: audit-service
-  template:
-    metadata:
-      labels:
-        app: audit-service
-    spec:
-      containers:
-      - name: audit-service
-        image: audit-service:latest
-        ports:
-        - containerPort: 3007
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: url
-        - name: ELASTICSEARCH_URL
-          valueFrom:
-            configMapKeyRef:
-              name: audit-config
-              key: elasticsearch-url
-        resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 3007
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 3007
-          initialDelaySeconds: 5
-          periodSeconds: 5
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: audit-service
-spec:
-  selector:
-    app: audit-service
-  ports:
-    - port: 80
-      targetPort: 3007
-  type: ClusterIP
-```
 
 ## 监控告警
 
@@ -1157,8 +1054,134 @@ const metrics = {
   storageSize: new promClient.Gauge({
     name: 'audit_storage_size_bytes',
     help: 'Current audit data storage size',
-    labelNames: ['storage_type'] // postgresql, elasticsearch, clickhouse
+    labelNames: ['storage_type'] // postgresql, redis
   })
+}
+```
+
+## 项目规划
+
+### 开发里程碑
+- **Week 3**: 审计服务开发（复杂度⭐⭐⭐）
+- **优先级**: 中等（依赖用户服务和认证服务）
+- **估算工期**: 5-7个工作日
+- **端口**: 3008
+- **内存分配**: 256MB (标准版本)
+
+### 开发顺序 (基于服务间依赖关系)
+1. **Day 1-2**: 核心审计事件记录功能 + 内部API接口
+2. **Day 3-4**: PostgreSQL全文搜索和查询功能 + 与用户服务集成  
+3. **Day 5-6**: 合规性检查和安全事件分析 + 与权限服务集成
+4. **Day 7**: 告警规则和实时监控 + 与通知服务集成
+
+### 服务集成计划
+- **Phase 1**: 建立基础审计数据收集能力
+- **Phase 2**: 集成认证和用户服务，增强事件上下文
+- **Phase 3**: 集成权限服务，实现合规性检查
+- **Phase 4**: 集成通知服务，实现实时告警
+
+### 技术风险评估
+- **数据量风险**: PostgreSQL性能在大数据量下的表现
+- **搜索性能**: 全文搜索替代ES的性能对比
+- **合规复杂性**: GDPR等法规要求的技术实现
+- **服务依赖**: 需要与所有业务服务集成审计功能
+- **数据一致性**: 跨服务审计事件的时序和完整性
+
+### 依赖关系
+- **前置依赖**: 用户管理服务(3003)、认证授权服务(3001)、权限管理服务(3002)
+- **并行开发**: 可与监控服务(3007)同步开发
+- **后续集成**: 需要与所有业务服务集成审计功能
+- **被依赖服务**: 为合规报告和安全分析提供数据
+
+### 服务间交互设计
+
+#### 1. 审计事件接收接口
+```typescript
+// 所有服务 → 审计服务 (3008)
+// 记录审计事件 (内部API)
+POST http://audit-service:3008/internal/events
+Headers: X-Service-Token: {内部服务令牌}
+Body: AuditEvent
+
+// 批量记录审计事件
+POST http://audit-service:3008/internal/events/batch  
+Headers: X-Service-Token: {内部服务令牌}
+Body: AuditEvent[]
+```
+
+#### 2. 与认证服务的交互
+```typescript
+// 审计服务 → 认证服务 (3001)
+// 验证操作者身份
+POST http://auth-service:3001/internal/tokens/verify
+Headers: X-Service-Token: {内部服务令牌}
+Body: { "token": "jwt_token" }
+
+// 获取会话信息
+GET http://auth-service:3001/internal/sessions/{sessionId}
+Headers: X-Service-Token: {内部服务令牌}
+```
+
+#### 3. 与用户服务的交互 
+```typescript
+// 审计服务 → 用户管理服务 (3003)
+// 获取用户详细信息
+GET http://user-management-service:3003/internal/users/{userId}
+Headers: X-Service-Token: {内部服务令牌}
+
+// 批量获取用户信息
+POST http://user-management-service:3003/internal/users/batch
+Headers: X-Service-Token: {内部服务令牌}
+Body: { "userIds": ["user1", "user2"] }
+```
+
+#### 4. 与权限服务的交互
+```typescript
+// 审计服务 → 权限管理服务 (3002)
+// 记录权限变更审计
+POST http://rbac-service:3002/internal/audit/permission-change
+Headers: X-Service-Token: {内部服务令牌}
+Body: {
+  "userId": "user_id",
+  "changedBy": "admin_id", 
+  "changeType": "role_assigned",
+  "beforeData": [],
+  "afterData": ["admin_role"]
+}
+```
+
+#### 5. 与通知服务的交互
+```typescript
+// 审计服务 → 通知服务 (3005)
+// 发送合规告警通知
+POST http://notification-service:3005/internal/notifications/send
+Headers: X-Service-Token: {内部服务令牌}
+Body: {
+  "recipientId": "compliance_officer_id",
+  "recipientType": "user",
+  "channel": "email", 
+  "templateId": "compliance_violation_alert",
+  "variables": {
+    "violationType": "GDPR_DATA_ACCESS",
+    "userId": "violating_user_id",
+    "timestamp": "2024-01-01T10:00:00Z"
+  }
+}
+```
+
+#### 6. 服务间审计装饰器设计
+```typescript
+// 统一审计装饰器，供所有服务使用
+@Audit({
+  eventType: AuditEventType.USER_MANAGEMENT,
+  resource: 'user',
+  action: 'create',
+  getResourceId: (args, result) => result?.id,
+  getMetadata: (args) => ({ email: args[0]?.email }),
+  async: true // 异步记录，不影响业务性能
+})
+async createUser(userData: CreateUserDto): Promise<User> {
+  // 业务逻辑
 }
 ```
 
@@ -1174,15 +1197,12 @@ cd audit-service
 npm install
 
 # 3. 启动依赖服务
-docker-compose up -d postgres redis elasticsearch clickhouse kafka
+docker-compose up -d postgres redis
 
 # 4. 数据库迁移
 npx prisma migrate dev
 
-# 5. 初始化 ClickHouse 表
-npm run clickhouse:init
-
-# 6. 启动开发服务器
+# 5. 启动开发服务器
 npm run start:dev
 
 # 7. 运行测试
@@ -1190,61 +1210,65 @@ npm run test
 npm run test:e2e
 ```
 
-### 配置文件示例
+### 标准版本服务配置
 ```typescript
-// config/audit.config.ts
+// config/audit.config.ts (标准版本)
 export default {
-  // 数据保留策略
+  // 服务配置
+  service: {
+    name: 'audit-service',
+    port: 3008,
+    version: '1.0.0',
+    memoryLimit: '256MB'
+  },
+  
+  // 数据保留策略 (标准版本)
   retention: {
-    auditEvents: 7 * 365, // 7年
+    auditEvents: 3 * 365, // 3年 (符合大部分合规要求)
     systemLogs: 90,       // 90天
-    securityEvents: 3 * 365, // 3年
+    securityEvents: 2 * 365, // 2年
     alerts: 180           // 180天
   },
   
-  // 合规规则
+  // 合规规则 (标准版本)
   compliance: {
     gdpr: {
       enabled: true,
-      dataRetention: 6 * 365, // 6年
+      dataRetention: 3 * 365, // 3年
       rightToErasure: true
     },
-    hipaa: {
-      enabled: false,
-      auditLogRetention: 6 * 365
+    basicCompliance: {
+      enabled: true,
+      auditAllOperations: true
     }
   },
   
-  // 威胁检测
+  // 威胁检测 (标准版本)
   threatDetection: {
     enabled: true,
     updateInterval: 3600, // 1小时
-    mlModels: {
-      anomalyDetection: true,
-      behaviorAnalysis: true
-    }
+    basicRules: true,
+    advancedML: false // 企业版功能
   },
   
-  // 告警配置
+  // 告警配置 (标准版本)
   alerting: {
     defaultCooldown: 300, // 5分钟
     channels: {
-      email: {
+      notification_service: {
         enabled: true,
-        smtp: {
-          host: process.env.SMTP_HOST,
-          port: process.env.SMTP_PORT,
-          auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS
-          }
-        }
-      },
-      webhook: {
-        enabled: true,
-        timeout: 5000
+        endpoint: 'http://notification-service:3005/internal/notifications/send'
       }
     }
+  },
+  
+  // 服务间通信
+  services: {
+    auth_service: 'http://auth-service:3001',
+    user_service: 'http://user-management-service:3003',
+    rbac_service: 'http://rbac-service:3002',
+    notification_service: 'http://notification-service:3005',
+    internal_token: process.env.INTERNAL_SERVICE_TOKEN
   }
 }
 ```
