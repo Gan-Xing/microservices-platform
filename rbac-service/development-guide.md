@@ -430,32 +430,311 @@ FOR VALUES WITH (MODULUS 16, REMAINDER 0);
 -- ... 创建其余15个分区
 ```
 
-## 生产部署指南
+## 项目规划
 
-### 1. 环境要求
-- **CPU**: 1 Core (生产环境)
-- **内存**: 512MB (生产环境)
-- **存储**: 20GB (包含日志和缓存)
-- **数据库**: PostgreSQL 15+ with RLS support
-- **缓存**: Redis 7+ with persistence
+### 开发里程碑 (Week 1)
 
-### 2. 监控配置
+**阶段一：核心RBAC功能** (Week 1.1-1.3)
+- 🎯 里程碑1：完成角色管理和权限管理系统
+- 🎯 里程碑2：实现用户角色绑定和权限验证引擎
+- 🎯 里程碑3：集成PostgreSQL RLS和Redis缓存优化
+
+**阶段二：服务集成** (Week 1.4-1.5)
+- 🎯 里程碑4：集成认证服务和用户管理服务
+- 🎯 里程碑5：集成审计服务和监控服务
+
+**阶段三：生产优化** (Week 1.6-1.7)
+- 🎯 里程碑6：性能优化和压力测试
+- 🎯 里程碑7：部署配置和权限审计
+
+### 资源分配
+
+**内存分配 (基于8GB总内存架构)**
+- RBAC权限管理服务：384MB (基础运行) + 128MB (权限缓存) = 512MB
+- 处理能力：每秒处理1000次权限检查，支持5个并发服务
+- 缓存容量：Redis缓存最多50000用户权限，支持5000个角色
+
+**开发优先级**
+1. **P0 (必须)**: 角色管理、权限验证、用户角色绑定
+2. **P1 (重要)**: PostgreSQL RLS、Redis缓存、权限审计
+3. **P2 (一般)**: 临时权限、权限模板、动态权限策略
+
+### 风险评估
+
+**技术风险**
+- ⚠️ **高风险**: PostgreSQL RLS性能影响和复杂性
+- ⚠️ **中风险**: Redis权限缓存一致性和失效问题
+- ⚠️ **低风险**: 角色继承关系复杂度管理
+
+**服务依赖风险**
+- 🔴 **强依赖**: 认证服务(用户验证)、用户服务(用户状态)
+- 🟡 **中依赖**: 审计服务(权限审计)、监控服务(性能指标)
+- 🟢 **弱依赖**: 租户服务(租户配置)、通知服务(权限变更通知)
+
+**缓解策略**
+- 优化PostgreSQL RLS策略，避免全表扫描
+- 实现正确的Redis缓存失效策略
+- 建立权限降级和容错机制
+
+## 服务间交互设计
+
+### 内部API接口
+
 ```typescript
-// 关键指标监控
-export const RBAC_METRICS = {
-  permissionCheckLatency: 'rbac_permission_check_duration_ms',
-  cacheHitRate: 'rbac_cache_hit_rate',
-  activeUsers: 'rbac_active_users_total',
-  rolesPerUser: 'rbac_roles_per_user_avg',
-  permissionDenials: 'rbac_permission_denials_total'
-};
+// 内部服务调用接口
+@Controller('internal')
+export class InternalRbacController {
+  @Post('permissions/check')
+  @UseGuards(ServiceTokenGuard)
+  async checkPermission(@Body() dto: PermissionCheckDto) {
+    // 单个权限检查
+    return this.rbacService.checkPermission(dto)
+  }
+
+  @Post('permissions/check-batch')
+  @UseGuards(ServiceTokenGuard)
+  async checkBatchPermissions(@Body() dto: BatchPermissionCheckDto) {
+    // 批量权限检查
+    return this.rbacService.checkBatchPermissions(dto)
+  }
+
+  @Get('users/{userId}/roles')
+  @UseGuards(ServiceTokenGuard)
+  async getUserRoles(@Param('userId') userId: string, @Query('tenantId') tenantId: string) {
+    // 获取用户角色
+    return this.rbacService.getUserRoles(userId, tenantId)
+  }
+
+  @Post('users/{userId}/roles')
+  @UseGuards(ServiceTokenGuard)
+  async assignUserRole(@Param('userId') userId: string, @Body() dto: AssignRoleDto) {
+    // 分配用户角色
+    return this.rbacService.assignUserRole(userId, dto)
+  }
+
+  @Post('rls/set-context')
+  @UseGuards(ServiceTokenGuard)
+  async setRlsContext(@Body() dto: RlsContextDto) {
+    // 设置PostgreSQL RLS上下文
+    return this.rlsService.setContext(dto)
+  }
+
+  @Get('health')
+  async getServiceHealth() {
+    // 服务健康检查
+    return this.healthService.check()
+  }
+}
 ```
 
-### 3. 安全配置
+### 服务间认证机制
+
+```typescript
+// X-Service-Token验证
+@Injectable()
+export class ServiceTokenGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest()
+    const serviceToken = request.headers['x-service-token']
+    
+    // 验证内部服务令牌
+    return this.validateServiceToken(serviceToken)
+  }
+
+  private validateServiceToken(token: string): boolean {
+    // 验证逻辑：检查令牌是否有效
+    return token === process.env.INTERNAL_SERVICE_TOKEN
+  }
+}
+```
+
+### 统一错误处理
+
+```typescript
+// 统一错误响应格式
+export class RbacErrorHandler {
+  handleError(error: any): ServiceErrorResponse {
+    return {
+      success: false,
+      errorCode: error.code || 'RBAC_ERROR',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      serviceName: 'rbac-service'
+    }
+  }
+}
+
+// 权限检查缓存策略
+@Injectable()
+export class PermissionCacheService {
+  async checkWithCache(
+    userId: string,
+    permission: string,
+    resource: string,
+    tenantId: string
+  ): Promise<PermissionResult> {
+    const cacheKey = `rbac:check:${userId}:${permission}:${resource}:${tenantId}`
+    
+    // 先查缓存
+    const cached = await this.redis.get(cacheKey)
+    if (cached) {
+      return JSON.parse(cached)
+    }
+    
+    // 缓存未命中，检查数据库
+    const result = await this.checkPermissionFromDB(userId, permission, resource, tenantId)
+    
+    // 缓存结果 (5分钟)
+    await this.redis.setex(cacheKey, 300, JSON.stringify(result))
+    
+    return result
+  }
+}
+```
+
+## 生产部署指南
+
+### Docker Compose 配置
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  rbac-service:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: rbac-service
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
+      - REDIS_URL=redis://redis:6379/2
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - USER_SERVICE_URL=http://user-management-service:3003
+      - AUDIT_SERVICE_URL=http://audit-service:3008
+      - CACHE_TTL=300
+      - MAX_ROLES_PER_USER=10
+      - PERMISSION_CACHE_SIZE=50000
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 384M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+networks:
+  platform-network:
+    external: true
+```
+
+### 环境变量配置
+
+```bash
+# .env
+NODE_ENV=development
+PORT=3002
+
+# 数据库配置
+DATABASE_URL=postgresql://user:pass@localhost:5432/platform
+REDIS_URL=redis://localhost:6379/2
+
+# 服务间通信
+INTERNAL_SERVICE_TOKEN=your-internal-service-token
+AUTH_SERVICE_URL=http://auth-service:3001
+USER_SERVICE_URL=http://user-management-service:3003
+AUDIT_SERVICE_URL=http://audit-service:3008
+
+# RBAC配置
+CACHE_TTL=300
+MAX_ROLES_PER_USER=10
+PERMISSION_CACHE_SIZE=50000
+
+# PostgreSQL RLS配置
+ENABLE_RLS=true
+RLS_BYPASS_ROLE=platform_admin
+
+# 性能配置
+PERMISSION_CHECK_TIMEOUT=100
+CACHE_WARMUP_ON_START=true
+```
+
+### 快速开始
+
+```bash
+# 1. 启动基础设施
+docker-compose up -d postgres redis
+
+# 2. 安装依赖
+npm install
+
+# 3. 数据库迁移
+npx prisma migrate dev
+
+# 4. 初始化系统权限
+npm run seed:permissions
+
+# 5. 启动开发服务器
+nx serve rbac-service
+
+# 6. 测试权限检查API
+curl -X POST http://localhost:3002/api/v1/rbac/check/permission \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "userId": "user-123",
+    "resource": "user",
+    "action": "read",
+    "tenantId": "tenant-456"
+  }'
+```
+
+## 生产部署检查清单
+
+### 部署前检查
+- [ ] 确认服务器资源：512MB内存，0.5CPU核心
+- [ ] 配置所有必需的环境变量
+- [ ] 启用PostgreSQL RLS策略
+- [ ] 配置Redis持久化和备份
+- [ ] 设置权限审计日志轮转
+- [ ] 验证与其他服务的网络连通性
+
+### 服务启动顺序
+1. PostgreSQL, Redis (基础设施)
+2. user-management-service, auth-service (依赖服务)
+3. rbac-service (主服务)
+4. 其他業务服务 (依赖RBAC的服务)
+
+### 监控指标
+- 权限检查响应时间P95 < 10ms
+- 缓存命中率 > 90%
+- 权限检查成功率 > 99.9%
+- 服务内存使用 < 450MB
+- API响应时间P95 < 50ms
+
+### 安全配置
 - 启用PostgreSQL RLS策略
 - Redis AUTH认证
 - JWT Token加密
 - API访问限流
 - 审计日志加密存储
 
-这个RBAC服务设计支持100租户+10万用户的企业级权限管理，提供完整的角色权限控制、高性能缓存优化和生产级监控能力。
+---
+
+这个RBAC权限管理服务为整个微服务平台提供强大的权限控制能力，支持100租户+10万用户的企业级权限管理，提供完整的角色权限控制、高性能缓存优化和生产级监控能力。通过标准版本的优化设计，确保在Week 1内完成开发和部署。
