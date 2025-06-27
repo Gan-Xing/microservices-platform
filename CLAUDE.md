@@ -194,3 +194,248 @@ nx serve user-management-service
 - 部署要求: Docker Compose + 8GB内存
 
 **标准版本专注生产可用，选择最适合的技术栈**
+
+## Claude Code 斜线命令配置指南
+
+## 📋 概述
+
+Claude Code支持自定义斜线命令，通过在项目中创建`.claude/commands/`目录来定义可重用的prompt模板，大大提升开发效率。
+
+## 🔧 配置方法
+
+### 项目级命令 (.claude/commands/)
+
+在项目根目录创建`.claude/commands/`目录，每个Markdown文件都会成为一个斜线命令：
+
+```bash
+# 项目结构
+.claude/
+└── commands/
+    ├── dev.md                    # /project:dev
+    ├── review.md                 # /project:review
+    ├── frontend/
+    │   └── component.md          # /project:frontend/component
+    └── backend/
+        └── api.md                # /project:backend/api
+```
+
+### 个人级命令 (~/.claude/commands/)
+
+在用户主目录创建全局命令，可在所有项目中使用：
+
+```bash
+# 全局命令结构
+~/.claude/
+└── commands/
+    ├── debug.md                  # /user:debug
+    ├── optimize.md               # /user:optimize
+    └── security-audit.md         # /user:security-audit
+```
+
+## 📝 命令文件格式
+
+### 基础命令格式
+
+```markdown
+<!-- .claude/commands/example.md -->
+# 文件上传功能开发
+
+请帮我开发一个文件上传功能，包括：
+
+1. 文件验证（大小、类型）
+2. 安全检查
+3. 存储处理
+4. 错误处理
+
+请提供完整的实现方案。
+```
+
+### 带参数的命令格式
+
+使用`$ARGUMENTS`变量接收用户输入：
+
+```markdown
+<!-- .claude/commands/debug-issue.md -->
+# 调试问题 #$ARGUMENTS
+
+请帮我分析和修复GitHub issue #$ARGUMENTS：
+
+1. 理解问题描述
+2. 分析相关代码
+3. 提供修复方案
+4. 实现修复代码
+
+请从代码库中搜索相关文件并提供完整的解决方案。
+```
+
+使用方式：`/project:debug-issue 123`
+
+### 高级命令模板
+
+```markdown
+<!-- .claude/commands/dev.md -->
+# 微服务开发优化 - $ARGUMENTS
+
+目标：对 $ARGUMENTS/development-guide.md 进行全面优化，使其符合标准版本目标并加强微服务集成。
+
+**执行步骤：**
+
+1. **智能读取当前文档**：
+   - 使用Read工具读取 $ARGUMENTS/development-guide.md
+   - 评估3个开发阶段完成情况
+
+2. **智能搜索参考文档**：
+   - 使用Grep搜索 "$ARGUMENTS|service-name" 在API-ENDPOINTS.md中的定义
+   - 搜索SERVICE_FUNCTIONS_LIST.md获取功能模块要求
+   - 搜索SERVICE_INTERACTION_SPEC.md了解服务间交互
+
+3. **技术栈标准化**：
+   - 移除Kubernetes → Docker Compose
+   - 移除Kafka → Redis Streams
+   - 移除Elasticsearch → PostgreSQL全文搜索
+
+4. **完善文档内容**：
+   - 补充项目规划（里程碑、内存分配、风险评估）
+   - 增强服务间交互设计
+   - 优化Docker Compose配置
+
+**输出要求**：
+- 直接修改development-guide.md文件
+- 确保符合标准版本目标（100租户+10万用户）
+- 保持文档专业性和完整性
+```
+
+## 🎯 命令命名规范
+
+### 推荐的命名约定
+
+```bash
+# 开发相关
+/project:dev:{service-name}      # 开发服务
+/project:review                  # 代码审查
+/project:test                   # 测试相关
+/project:deploy                 # 部署相关
+
+# 分析相关  
+/project:analyze                # 代码分析
+/project:debug:{issue-number}   # 调试问题
+/project:security-audit         # 安全审计
+/project:performance            # 性能优化
+
+# 文档相关
+/project:docs                   # 文档生成
+/project:api-spec              # API规范
+/project:readme                # README更新
+```
+
+## 🚀 实用命令示例
+
+### 1. 服务开发命令
+
+```markdown
+<!-- .claude/commands/dev.md -->
+# 微服务开发优化模板
+
+用于优化指定微服务的development-guide.md文档，使其符合企业级标准。
+
+参数：服务名称 (如 api-gateway-service)
+使用：/project:dev api-gateway-service
+```
+
+### 2. 代码审查命令
+
+```markdown
+<!-- .claude/commands/review.md -->
+# 代码审查模板
+
+请对当前项目进行全面的代码审查：
+
+1. **架构审查**：检查服务架构是否合理
+2. **安全审查**：识别潜在安全漏洞
+3. **性能审查**：分析性能瓶颈
+4. **代码质量**：检查代码规范和最佳实践
+
+提供具体的改进建议和实现方案。
+```
+
+### 3. API文档生成命令
+
+```markdown
+<!-- .claude/commands/api-docs.md -->
+# API文档自动生成
+
+基于当前项目代码自动生成API文档：
+
+1. 扫描所有Controller文件
+2. 提取API端点和参数
+3. 生成OpenAPI规范
+4. 创建可读性强的文档
+
+请生成完整的API文档。
+```
+
+## 🔍 最佳实践
+
+### 1. 命令设计原则
+
+- **单一职责**：每个命令专注一个特定任务
+- **参数化**：使用$ARGUMENTS增加灵活性  
+- **结构化**：提供清晰的执行步骤
+- **可复用**：设计通用的命令模板
+
+### 2. 参数使用技巧
+
+```markdown
+# 多参数支持
+分析服务：$ARGUMENTS
+
+# 从$ARGUMENTS中提取服务名称和操作类型
+# 例如：/project:service api-gateway-service optimize
+```
+
+### 3. 命令组织建议
+
+```bash
+.claude/commands/
+├── dev/                    # 开发相关命令
+│   ├── service.md         # 服务开发
+│   ├── api.md            # API开发  
+│   └── frontend.md       # 前端开发
+├── ops/                   # 运维相关命令
+│   ├── deploy.md         # 部署
+│   ├── monitor.md        # 监控
+│   └── backup.md         # 备份
+└── docs/                  # 文档相关命令
+    ├── api-spec.md       # API规范
+    ├── readme.md         # README
+    └── architecture.md   # 架构文档
+```
+
+## 💡 高级功能
+
+### 1. 条件执行
+
+```markdown
+# 根据项目类型执行不同逻辑
+如果是微服务项目，执行服务优化流程
+如果是前端项目，执行组件优化流程
+```
+
+### 2. 环境感知
+
+```markdown
+# 检测当前环境并调整行为
+检查当前是否为开发环境、测试环境或生产环境
+根据环境执行相应的操作
+```
+
+### 3. 智能文档处理
+
+```markdown
+# 大文档处理策略
+1. 优先使用Grep工具搜索关键词
+2. 使用Read工具分段读取大文件
+3. 基于搜索结果确定需要详细处理的部分
+```
+
+通过合理配置和使用Claude Code的斜线命令功能，可以大幅提升开发效率，创建标准化的工作流程。
