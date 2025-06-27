@@ -597,73 +597,218 @@ interface NotificationConfig {
 }
 ```
 
+## 项目规划
+
+### 开发里程碑 (Week 3)
+
+**阶段一：核心功能开发** (Week 3.1-3.3)
+- 🎯 里程碑1：完成消息模板管理和邮件通知功能
+- 🎯 里程碑2：实现消息队列处理和失败重试机制
+- 🎯 里程碑3：完成用户偏好管理和WebSocket实时通知
+
+**阶段二：服务集成** (Week 3.4-3.5)
+- 🎯 里程碑4：集成认证服务和权限管理服务
+- 🎯 里程碑5：集成审计服务和监控服务
+
+**阶段三：生产优化** (Week 3.6-3.7)
+- 🎯 里程碑6：性能优化和压力测试
+- 🎯 里程碑7：部署配置和监控告警
+
+### 资源分配
+
+**内存分配 (基于8GB总内存架构)**
+- 消息通知服务：768MB (基础运行) + 256MB (队列缓存) = 1024MB
+- 处理能力：每分钟处理3000条消息，支持5个并发渠道
+- 队列容量：Redis队列最大10000条消息，支持延时发送
+
+**开发优先级**
+1. **P0 (必须)**: 邮件通知、模板管理、消息队列
+2. **P1 (重要)**: WebSocket通知、用户偏好、失败重试
+3. **P2 (一般)**: 短信/推送通知、批量发送、统计分析
+
+### 风险评估
+
+**技术风险**
+- ⚠️ **高风险**: 第三方邮件服务商限制和稳定性
+- ⚠️ **中风险**: Redis队列性能瓶颈和消息堆积
+- ⚠️ **低风险**: WebSocket连接管理和断线重连
+
+**服务依赖风险**
+- 🔴 **强依赖**: 认证服务(用户验证)、权限服务(权限检查)
+- 🟡 **中依赖**: 审计服务(操作记录)、监控服务(指标统计)
+- 🟢 **弱依赖**: 用户服务(用户信息)、租户服务(租户配置)
+
+**缓解策略**
+- 实现邮件服务商失败转移机制
+- 设置Redis队列监控和自动扩容
+- 建立服务降级和熔断保护
+
+## 服务间交互设计
+
+### 内部API接口
+
+```typescript
+// 内部服务调用接口
+@Controller('internal')
+export class InternalNotificationController {
+  @Post('notifications/send')
+  @UseGuards(ServiceTokenGuard)
+  async sendNotification(@Body() dto: InternalSendNotificationDto) {
+    // 内部服务发送通知
+    return this.notificationService.sendInternal(dto)
+  }
+
+  @Post('notifications/batch')
+  @UseGuards(ServiceTokenGuard)
+  async sendBatchNotifications(@Body() dto: InternalBatchNotificationDto) {
+    // 批量发送通知
+    return this.notificationService.sendBatchInternal(dto)
+  }
+
+  @Get('health')
+  async getServiceHealth() {
+    // 服务健康检查
+    return this.healthService.check()
+  }
+
+  @Post('preferences/sync')
+  @UseGuards(ServiceTokenGuard)
+  async syncUserPreferences(@Body() dto: SyncPreferencesDto) {
+    // 同步用户偏好设置
+    return this.preferenceService.syncFromUserService(dto)
+  }
+}
+```
+
+### 服务间认证机制
+
+```typescript
+// X-Service-Token验证
+@Injectable()
+export class ServiceTokenGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest()
+    const serviceToken = request.headers['x-service-token']
+    
+    // 验证内部服务令牌
+    return this.validateServiceToken(serviceToken)
+  }
+
+  private validateServiceToken(token: string): boolean {
+    // 验证逻辑：检查令牌是否有效
+    return token === process.env.INTERNAL_SERVICE_TOKEN
+  }
+}
+```
+
+### 统一错误处理
+
+```typescript
+// 统一错误响应格式
+export class ServiceErrorHandler {
+  handleError(error: any): ServiceErrorResponse {
+    return {
+      success: false,
+      errorCode: error.code || 'INTERNAL_ERROR',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      serviceName: 'notification-service'
+    }
+  }
+}
+
+// 服务间调用重试机制
+@Injectable()
+export class ServiceCallService {
+  async callWithRetry<T>(
+    serviceCall: () => Promise<T>,
+    maxRetries: number = 3,
+    delay: number = 1000
+  ): Promise<T> {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await serviceCall()
+      } catch (error) {
+        if (attempt === maxRetries) throw error
+        await this.delay(delay * attempt)
+      }
+    }
+  }
+}
+```
+
 ## 部署方案
 
-### Docker 配置
+### Docker Compose 配置
 ```yaml
-# k8s-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: notification-service
-spec:
-  replicas: 3
-  selector:
-    matchLabels:
-      app: notification-service
-  template:
-    metadata:
-      labels:
-        app: notification-service
-    spec:
-      containers:
-      - name: notification-service
-        image: notification-service:latest
-        ports:
-        - containerPort: 3005
-        env:
-        - name: DATABASE_URL
-          valueFrom:
-            secretKeyRef:
-              name: db-secret
-              key: url
-        - name: REDIS_URL
-          valueFrom:
-            secretKeyRef:
-              name: redis-secret
-              key: url
-        resources:
-          requests:
-            memory: "256Mi"
-            cpu: "250m"
-          limits:
-            memory: "512Mi"
-            cpu: "500m"
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 3005
-          initialDelaySeconds: 30
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health/ready
-            port: 3005
-          initialDelaySeconds: 5
-          periodSeconds: 5
+# docker-compose.yml
+version: '3.8'
+services:
+  notification-service:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "3005:3005"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
+      - REDIS_URL=redis://redis:6379/0
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASS=${SMTP_PASS}
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: '0.5'
+        reservations:
+          memory: 768M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3005/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
 
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: notification-service
-spec:
-  selector:
-    app: notification-service
-  ports:
-    - port: 80
-      targetPort: 3005
-  type: ClusterIP
+  # 队列处理服务 (独立进程)
+  notification-worker:
+    build: 
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: notification-worker
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
+      - REDIS_URL=redis://redis:6379/0
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.25'
+        reservations:
+          memory: 256M
+          cpus: '0.1'
+
+networks:
+  platform-network:
+    external: true
 ```
 
 ## 监控告警
@@ -833,4 +978,98 @@ describe('NotificationController (e2e)', () => {
 })
 ```
 
-这个消息通知服务将为整个微服务平台提供强大的多渠道通信能力，支持邮件、短信、推送通知等多种消息发送方式，并提供完善的模板管理、用户偏好、统计分析等功能。
+### 快速开始
+
+```bash
+# 1. 启动基础设施
+docker-compose up -d postgres redis
+
+# 2. 安装依赖
+npm install
+
+# 3. 数据库迁移
+npx prisma migrate dev
+
+# 4. 启动开发服务器
+nx serve notification-service
+
+# 5. 启动队列处理器
+npm run start:worker
+
+# 6. 测试API
+curl -X POST http://localhost:3005/api/v1/messages/send \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "channel": "email",
+    "recipient": "test@example.com",
+    "subject": "Test Notification",
+    "content": "This is a test message"
+  }'
+```
+
+### 环境变量配置
+
+```bash
+# .env
+NODE_ENV=development
+PORT=3005
+
+# 数据库配置
+DATABASE_URL=postgresql://user:pass@localhost:5432/platform
+REDIS_URL=redis://localhost:6379/0
+
+# 服务间通信
+INTERNAL_SERVICE_TOKEN=your-internal-service-token
+AUTH_SERVICE_URL=http://auth-service:3001
+USER_SERVICE_URL=http://user-management-service:3003
+AUDIT_SERVICE_URL=http://audit-service:3008
+
+# 邮件配置
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_SECURE=false
+SMTP_USER=your-email@gmail.com
+SMTP_PASS=your-app-password
+
+# 短信配置 (可选)
+ALICLOUD_ACCESS_KEY_ID=your-access-key
+ALICLOUD_ACCESS_KEY_SECRET=your-secret-key
+ALICLOUD_SMS_SIGN_NAME=your-sign-name
+
+# 推送配置 (可选)
+FCM_SERVER_KEY=your-fcm-server-key
+FCM_PROJECT_ID=your-project-id
+
+# 速率限制
+RATE_LIMIT_EMAIL_PER_MINUTE=100
+RATE_LIMIT_SMS_PER_MINUTE=20
+RATE_LIMIT_PUSH_PER_MINUTE=200
+```
+
+## 生产部署检查清单
+
+### 部署前检查
+- [ ] 确认服务器资源：1GB内存，0.5CPU核心
+- [ ] 配置所有必需的环境变量
+- [ ] 设置邮件服务商账户和API密钥
+- [ ] 配置Redis持久化和备份
+- [ ] 设置日志轮转和监控告警
+- [ ] 验证与其他服务的网络连通性
+
+### 服务启动顺序
+1. PostgreSQL, Redis (基础设施)
+2. auth-service, user-management-service (依赖服务)
+3. notification-service (主服务)
+4. notification-worker (队列处理器)
+
+### 监控指标
+- 消息发送成功率 > 99%
+- 消息处理延迟 < 5秒
+- 队列积压消息 < 1000条
+- 服务内存使用 < 900MB
+- API响应时间P95 < 200ms
+
+---
+
+这个消息通知服务将为整个微服务平台提供强大的多渠道通信能力，支持邮件、短信、推送通知等多种消息发送方式，并提供完善的模板管理、用户偏好、统计分析等功能。通过标准版本的优化设计，确保在100租户+10万用户规模下的稳定运行。
