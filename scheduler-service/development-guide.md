@@ -787,18 +787,390 @@ Cache Key: scheduler:next_execution:{jobId}
 TTL: 根据任务频率动态设置
 ```
 
-## 安全考虑
+## 项目规划
 
-### 任务隔离
+### 开发里程碑 (Week 3)
+
+**阶段一：核心调度功能** (Week 3.1-3.3)
+- 🎯 里程碑1：完成任务定义管理和执行控制系统
+- 🎯 里程碑2：实现Cron表达式解析和分布式锁管理
+- 🎯 里程碑3：集成BullMQ队列和重试机制
+
+**阶段二：服务集成** (Week 3.4-3.5)
+- 🎯 里程碑4：集成认证服务和权限管理服务
+- 🎯 里程碑5：集成审计服务和监控服务
+
+**阶段三：生产优化** (Week 3.6-3.7)
+- 🎯 里程碑6：性能优化和压力测试
+- 🎯 里程碑7：部署配置和监控告警
+
+### 资源分配
+
+**内存分配 (基于8GB总内存架构)**
+- 任务调度服务：640MB (基础运行) + 384MB (队列缓存) = 1024MB
+- 处理能力：支持1000个并发任务，每天100万个任务
+- 队列容量：BullMQ队列最大20000个任务，支持延时执行
+
+**开发优先级**
+1. **P0 (必须)**: 任务定义、Cron调度、任务执行
+2. **P1 (重要)**: 分布式锁、BullMQ队列、重试机制
+3. **P2 (一般)**: 执行历史、性能监控、高级调度策略
+
+### 风险评估
+
+**技术风险**
+- ⚠️ **高风险**: 分布式锁竞争和调度器脑裂问题
+- ⚠️ **中风险**: BullMQ队列性能瓶颈和任务积压
+- ⚠️ **低风险**: Cron表达式解析错误和时区处理
+
+**服务依赖风险**
+- 🔴 **强依赖**: 认证服务(任务授权)、权限服务(权限检查)
+- 🟡 **中依赖**: 审计服务(任务审计)、监控服务(性能指标)
+- 🟢 **弱依赖**: 通知服务(任务状态通知)、用户服务(用户信息)
+
+**缓解策略**
+- 实现分布式锁的超时和自动释放机制
+- 设置BullMQ队列监控和自动扩容
+- 建立任务降级和容错保护
+
+## 服务间交互设计
+
+### 内部API接口
+
+```typescript
+// 内部服务调用接口
+@Controller('internal')
+export class InternalSchedulerController {
+  @Post('jobs/create')
+  @UseGuards(ServiceTokenGuard)
+  async createInternalJob(@Body() dto: InternalCreateJobDto) {
+    // 内部服务创建任务
+    return this.schedulerService.createInternalJob(dto)
+  }
+
+  @Post('jobs/{jobId}/trigger')
+  @UseGuards(ServiceTokenGuard)
+  async triggerJob(@Param('jobId') jobId: string, @Body() dto: TriggerJobDto) {
+    // 手动触发任务
+    return this.schedulerService.triggerJob(jobId, dto)
+  }
+
+  @Get('jobs/{jobId}/status')
+  @UseGuards(ServiceTokenGuard)
+  async getJobStatus(@Param('jobId') jobId: string) {
+    // 获取任务状态
+    return this.schedulerService.getJobStatus(jobId)
+  }
+
+  @Post('jobs/batch-create')
+  @UseGuards(ServiceTokenGuard)
+  async createBatchJobs(@Body() dto: BatchCreateJobsDto) {
+    // 批量创建任务
+    return this.schedulerService.createBatchJobs(dto)
+  }
+
+  @Get('health')
+  async getServiceHealth() {
+    // 服务健康检查
+    return this.healthService.check()
+  }
+
+  @Post('jobs/{jobId}/pause')
+  @UseGuards(ServiceTokenGuard)
+  async pauseJob(@Param('jobId') jobId: string) {
+    // 暂停任务
+    return this.schedulerService.pauseJob(jobId)
+  }
+
+  @Post('jobs/{jobId}/resume')
+  @UseGuards(ServiceTokenGuard)
+  async resumeJob(@Param('jobId') jobId: string) {
+    // 恢复任务
+    return this.schedulerService.resumeJob(jobId)
+  }
+}
+```
+
+### 服务间认证机制
+
+```typescript
+// X-Service-Token验证
+@Injectable()
+export class ServiceTokenGuard implements CanActivate {
+  canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest()
+    const serviceToken = request.headers['x-service-token']
+    
+    // 验证内部服务令牌
+    return this.validateServiceToken(serviceToken)
+  }
+
+  private validateServiceToken(token: string): boolean {
+    // 验证逻辑：检查令牌是否有效
+    return token === process.env.INTERNAL_SERVICE_TOKEN
+  }
+}
+```
+
+### 统一错误处理
+
+```typescript
+// 统一错误响应格式
+export class SchedulerErrorHandler {
+  handleError(error: any): ServiceErrorResponse {
+    return {
+      success: false,
+      errorCode: error.code || 'SCHEDULER_ERROR',
+      message: error.message,
+      timestamp: new Date().toISOString(),
+      serviceName: 'scheduler-service'
+    }
+  }
+}
+
+// 任务执行重试机制
+@Injectable()
+export class JobRetryService {
+  async executeWithRetry(
+    jobId: string,
+    jobFunction: () => Promise<any>,
+    retryConfig: RetryConfig
+  ): Promise<JobResult> {
+    let lastError: Error
+    
+    for (let attempt = 0; attempt <= retryConfig.maxRetries; attempt++) {
+      try {
+        const result = await jobFunction()
+        return {
+          success: true,
+          result: result,
+          attempt: attempt + 1
+        }
+      } catch (error) {
+        lastError = error
+        
+        if (attempt === retryConfig.maxRetries) {
+          break
+        }
+        
+        // 计算重试延迟
+        const delay = this.calculateDelay(attempt, retryConfig)
+        await this.delay(delay)
+        
+        // 记录重试日志
+        await this.auditService.logJobRetry(jobId, attempt + 1, error.message)
+      }
+    }
+    
+    return {
+      success: false,
+      error: lastError.message,
+      attempt: retryConfig.maxRetries + 1
+    }
+  }
+}
+```
+
+## 部署配置
+
+### Docker Compose 配置
+```yaml
+# docker-compose.yml
+version: '3.8'
+services:
+  scheduler-service:
+    build: 
+      context: .
+      dockerfile: Dockerfile
+    container_name: scheduler-service
+    ports:
+      - "3009:3009"
+      - "9464:9464"  # Prometheus metrics
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
+      - REDIS_URL=redis://redis:6379/3
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - RBAC_SERVICE_URL=http://rbac-service:3002
+      - AUDIT_SERVICE_URL=http://audit-service:3008
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3005
+      - SCHEDULER_WORKER_COUNT=5
+      - SCHEDULER_MAX_CONCURRENT_JOBS=1000
+      - SCHEDULER_JOB_TIMEOUT_MS=300000
+      - SCHEDULER_LOCK_TTL_MS=30000
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+    deploy:
+      resources:
+        limits:
+          memory: 1024M
+          cpus: '0.75'
+        reservations:
+          memory: 640M
+          cpus: '0.5'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # 任务执行器 (独立进程)
+  scheduler-worker:
+    build: 
+      context: .
+      dockerfile: Dockerfile.worker
+    container_name: scheduler-worker
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
+      - REDIS_URL=redis://redis:6379/3
+      - WORKER_CONCURRENCY=10
+      - JOB_TIMEOUT=300000
+    networks:
+      - platform-network
+    depends_on:
+      - postgres
+      - redis
+      - scheduler-service
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    scale: 2  # 运行2个worker实例
+
+networks:
+  platform-network:
+    external: true
+```
+
+### 快速开始
+
+```bash
+# 1. 启动基础设施
+docker-compose up -d postgres redis
+
+# 2. 安装依赖
+npm install
+
+# 3. 数据库迁移
+npx prisma migrate dev
+
+# 4. 初始化调度器
+npm run seed:scheduler
+
+# 5. 启动开发服务器
+nx serve scheduler-service
+
+# 6. 启动工作进程
+npm run start:worker
+
+# 7. 测试任务创建API
+curl -X POST http://localhost:3009/api/v1/scheduler/jobs \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -d '{
+    "name": "Test Job",
+    "cronExpression": "0 */5 * * * *",
+    "jobType": "http",
+    "config": {
+      "url": "https://httpbin.org/get",
+      "method": "GET"
+    }
+  }'
+```
+
+### 环境变量配置
+
+```bash
+# .env
+NODE_ENV=development
+PORT=3009
+
+# 数据库配置
+DATABASE_URL=postgresql://user:pass@localhost:5432/platform
+REDIS_URL=redis://localhost:6379/3
+
+# 服务间通信
+INTERNAL_SERVICE_TOKEN=your-internal-service-token
+AUTH_SERVICE_URL=http://auth-service:3001
+RBAC_SERVICE_URL=http://rbac-service:3002
+AUDIT_SERVICE_URL=http://audit-service:3008
+NOTIFICATION_SERVICE_URL=http://notification-service:3005
+
+# 调度器配置
+SCHEDULER_WORKER_COUNT=5
+SCHEDULER_MAX_CONCURRENT_JOBS=1000
+SCHEDULER_JOB_TIMEOUT_MS=300000
+SCHEDULER_LOCK_TTL_MS=30000
+
+# BullMQ配置
+BULL_REDIS_HOST=localhost
+BULL_REDIS_PORT=6379
+BULL_REDIS_DB=3
+BULL_MAX_STALLED_COUNT=3
+BULL_STALLED_INTERVAL=30000
+
+# 监控配置
+METRICS_ENABLED=true
+PROMETHEUS_PORT=9464
+LOG_LEVEL=info
+
+# 任务限制
+MAX_JOBS_PER_TENANT=1000
+MAX_EXECUTIONS_PER_HOUR=10000
+JOB_EXECUTION_TIMEOUT=600000
+```
+
+## 生产部署检查清单
+
+### 部署前检查
+- [ ] 确认服务器资源：1024MB内存，0.75CPU核心
+- [ ] 配置所有必需的环境变量
+- [ ] 设置Redis持久化和备份
+- [ ] 配置BullMQ队列参数
+- [ ] 设置任务执行日志轮转
+- [ ] 验证与其他服务的网络连通性
+- [ ] 测试分布式锁正常工作
+
+### 服务启动顺序
+1. PostgreSQL, Redis (基础设施)
+2. auth-service, rbac-service (依赖服务)
+3. scheduler-service (主服务)
+4. scheduler-worker (工作进程)
+
+### 监控指标
+- 任务执行成功率 > 99.9%
+- 任务调度延迟 < 10秒
+- 队列积压任务 < 5000个
+- 服务内存使用 < 900MB
+- API响应时间P95 < 100ms
+- 分布式锁获取成功率 > 95%
+
+### 安全考虑
+
+#### 任务隔离
 - 租户级别的任务隔离
 - 资源使用限制
 - 执行时间限制
 - 并发数限制
 
-### 权限控制
+#### 权限控制
 - 任务创建权限验证
 - 执行结果访问控制
 - 敏感配置加密存储
 - 审计日志记录
 
-通过这样的设计，任务调度服务能够提供可靠、高性能、可扩展的定时任务执行能力，满足企业级应用的各种调度需求。
+---
+
+这个任务调度服务为整个微服务平台提供强大的定时任务执行能力，支持100租户+10万用户的企业级任务调度，提供可靠、高性能、可扩展的定时任务执行能力，满足企业级应用的各种调度需求。通过标准版本的优化设计，确保在Week 3内完成开发和部署。
