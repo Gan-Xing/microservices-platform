@@ -1,32 +1,84 @@
-# 消息队列服务开发文档 - 标准版本
+# 消息队列服务开发指南 - 标准版本
 
-## 服务概述
+## 📋 项目规划阶段 (Project Planning)
 
+### 项目计划制定
+**开发周期**: Week 3-4 (标准版本4周计划)
+**优先级**: ⭐⭐⭐⭐ (Week 3-4 扩展服务)
+**依赖关系**: 依赖用户管理(3003)、认证授权(3001)、API网关(3000)
+**内存分配**: 512MB (总计8GB中的分配)
+
+### 里程碑设置
+- **Week 3.1**: 基础消息操作实现 (发布/订阅)
+- **Week 3.2**: Redis Streams集成完成
+- **Week 3.3**: 队列管理和监控功能
+- **Week 3.4**: 健康检查和服务集成
+- **Week 4.1**: 性能优化和错误处理
+- **Week 4.2**: 综合测试和部署验证
+
+### 资源分配
+- **端口**: 3010
+- **数据库**: 共享PostgreSQL实例 (mq_开头表)
+- **缓存**: 共享Redis实例 (专用命名空间)
+- **存储需求**: 100GB消息存储空间
+- **API端点**: 14个核心端点
+
+### 风险评估
+- **技术风险**: Redis Streams学习曲线 - 中等风险
+- **依赖风险**: 需要认证服务先完成 - 低风险
+- **集成风险**: 与所有服务都有消息交互 - 高风险
+- **性能风险**: 10万用户消息量 - 中等风险
+
+---
+
+## 🎯 需求分析阶段 (Requirements Analysis)
+
+### 业务需求收集
 消息队列服务是微服务平台的消息中间件核心，面向**100租户+10万用户**的企业级生产系统，负责异步消息传递、服务解耦、事件驱动架构和可靠消息传输，为整个平台提供高性能、高可用的消息通信能力。
 
-### 🎯 标准版本定位
+### 技术需求分析
 - **消息处理**: 日处理100万条消息，支持标准版本并发
 - **可靠性**: 99.9%消息可靠性，支持消息持久化
 - **延迟要求**: 消息延迟<10ms，实时消息处理
 - **队列管理**: 支持多种队列类型，智能路由分发
 - **部署方式**: Docker Compose + Redis Streams
 
-## 技术栈
+### 用户故事编写
+1. **系统管理员**: 需要创建和管理消息队列，监控消息处理状态
+2. **应用开发者**: 需要发布消息到队列，订阅队列消息进行处理
+3. **运维人员**: 需要监控队列健康状态，查看消息处理指标
+4. **租户管理员**: 需要管理租户级别的消息队列配置和权限
 
-### 后端技术 (标准版本)
-- **框架**: NestJS 10.x + TypeScript 5.x
-- **数据库**: PostgreSQL 15+ (元数据) + Redis 7+ (消息存储)
-- **ORM**: Prisma ORM
-- **消息中间件**: Redis Streams (主要) + Redis Pub/Sub (辅助)
-- **客户端**: ioredis + Redis Bull Queue
-- **企业版功能**: Apache Kafka 3.5+ (企业版保留)
+### 验收标准定义
+- **功能验收**: 4个核心功能模块100%实现
+- **性能验收**: 支持1000 QPS消息处理，P95延迟<50ms
+- **可靠性验收**: 消息不丢失，支持错误重试和死信队列
+- **集成验收**: 与其他11个服务消息通信正常
 
-### 消息技术 (标准版本)
-- **Redis Streams**: 主要消息队列 (适合标准版本规模)
-- **Redis Pub/Sub**: 实时通知、轻量级消息
-- **协调器**: Redis 分布式锁 + 消费者组
-- **监控**: Redis Commander + Custom Metrics
-- **序列化**: JSON (简化序列化)
+---
+
+## 🏗️ 架构设计阶段 (Architecture Design)
+
+### 系统架构设计
+消息队列服务采用**标准版本简化架构**，使用Redis Streams作为主要消息队列，避免Kafka等重量级组件：
+
+### 技术架构说明
+标准版本消息队列服务专为100租户+10万用户规模设计，选择最适合的技术栈：
+
+#### 标准版本技术选择 ✅
+- **消息存储**: Redis Streams (适合标准版本吞吐量)
+- **元数据存储**: PostgreSQL (复用现有数据库)
+- **框架**: NestJS 10.x + TypeScript 5.x (统一技术栈)
+- **部署**: Docker Compose (避免K8S复杂性)
+- **序列化**: JSON (简化处理)
+
+#### 企业版本保留 ⭐ (未来扩展)
+- **Apache Kafka**: 企业版高吞吐量场景
+- **消息压缩**: Protobuf/Avro等高级序列化
+- **分布式跟踪**: Jaeger/Zipkin集成
+
+### 数据库设计
+**PostgreSQL表结构** (共享数据库实例)：
 
 ## 核心功能模块
 
@@ -214,230 +266,206 @@ CREATE TABLE consumption_records (
 );
 ```
 
-## 消息架构设计
+### 标准版本消息架构
+**简化架构** - 专注Redis Streams，避免过度复杂性：
 
-### Kafka + Redis 混合架构
 ```mermaid
 graph TB
-    Producer[消息生产者] --> Router[消息路由器]
-    Router --> KafkaCheck{消息类型判断}
-    Router --> RedisCheck{消息类型判断}
+    Producer[消息生产者] --> Gateway[API网关:3000]
+    Gateway --> MQService[消息队列服务:3010]
     
-    KafkaCheck -->|业务事件| KafkaCluster[Kafka集群]
-    KafkaCheck -->|数据流| KafkaCluster
-    KafkaCheck -->|大批量消息| KafkaCluster
+    MQService --> RedisStreams[Redis Streams]
+    MQService --> PostgreSQL[PostgreSQL元数据]
     
-    RedisCheck -->|实时通知| RedisStreams[Redis Streams]
-    RedisCheck -->|系统消息| RedisStreams
-    RedisCheck -->|轻量消息| RedisStreams
+    RedisStreams --> ConsumerGroup[消费者组]
+    ConsumerGroup --> MessageProcessor[消息处理器]
     
-    KafkaCluster --> KafkaConsumer[Kafka消费者]
-    RedisStreams --> RedisConsumer[Redis消费者]
-    
-    KafkaConsumer --> MessageProcessor[消息处理器]
-    RedisConsumer --> MessageProcessor
+    MessageProcessor --> UserService[用户服务:3003]
+    MessageProcessor --> NotificationService[通知服务:3005]
+    MessageProcessor --> AuditService[审计服务:3008]
     
     MessageProcessor --> DeadLetter[死信队列]
-    MessageProcessor --> Metrics[监控指标]
-    MessageProcessor --> AuditLog[审计日志]
+    MessageProcessor --> Monitoring[监控服务:3007]
 ```
 
-### 消息路由策略
+### 服务间交互设计
+基于SERVICE_INTERACTION_SPEC.md，消息队列服务与其他服务的交互模式：
+
+#### 内部API接口 (服务间通信)
 ```typescript
-@Injectable()
-export class MessageRouter {
-  routeMessage(message: Message): MessageBackend {
-    // 基于消息类型路由
-    if (this.isHighThroughputMessage(message)) {
-      return MessageBackend.KAFKA;
-    }
-    
-    // 基于消息大小路由
-    if (message.size > this.config.LARGE_MESSAGE_THRESHOLD) {
-      return MessageBackend.KAFKA;
-    }
-    
-    // 基于持久化要求路由
-    if (message.headers.persistence === 'durable') {
-      return MessageBackend.KAFKA;
-    }
-    
-    // 基于实时性要求路由
-    if (message.headers.priority === 'realtime') {
-      return MessageBackend.REDIS;
-    }
-    
-    // 默认使用Redis处理轻量消息
-    return MessageBackend.REDIS;
-  }
+// 内部服务调用 - 使用X-Service-Token认证
+interface InternalMessageAPI {
+  // 用户服务调用
+  'POST /internal/mq/user-events',     // 用户事件发布
+  'POST /internal/mq/user-notifications', // 用户通知消息
   
-  private isHighThroughputMessage(message: Message): boolean {
-    const highThroughputTypes = [
-      'user.behavior',
-      'system.metrics',
-      'audit.log',
-      'data.sync'
-    ];
-    
-    return highThroughputTypes.includes(message.type);
-  }
+  // 审计服务调用
+  'POST /internal/mq/audit-logs',      // 审计日志消息
+  'GET /internal/mq/audit-queue-status', // 审计队列状态
+  
+  // 通知服务调用
+  'POST /internal/mq/notifications',   // 通知消息发布
+  'GET /internal/mq/notification-queue', // 通知队列状态
+  
+  // 监控服务调用
+  'GET /internal/mq/metrics',          // 消息队列指标
+  'GET /internal/mq/health-detailed'   // 详细健康状态
 }
 ```
 
-## Kafka集成实现
+#### 统一错误处理
+```typescript
+// 标准版本错误响应格式
+interface MessageQueueError {
+  code: 'MQ_QUEUE_NOT_FOUND' | 'MQ_PUBLISH_FAILED' | 'MQ_CONSUMER_ERROR';
+  message: string;
+  details?: any;
+  retryAfter?: number; // 重试延迟(秒)
+}
+```
+```
 
-### Kafka生产者
+## 核心实现 - 标准版本
+
+### Redis Streams消息发布
 ```typescript
 @Injectable()
-export class KafkaProducerService {
-  private kafka: Kafka;
-  private producer: Producer;
+export class MessagePublisher {
+  constructor(
+    private readonly redis: Redis,
+    private readonly auditService: AuditService // 服务间调用
+  ) {}
   
-  constructor() {
-    this.kafka = new Kafka({
-      clientId: 'message-queue-service',
-      brokers: process.env.KAFKA_BROKERS.split(','),
-      retry: {
-        initialRetryTime: 100,
-        retries: 8,
-        maxRetryTime: 30000,
-        retryOnFailure: true
-      }
-    });
-    
-    this.producer = this.kafka.producer({
-      transactionTimeout: 30000,
-      maxInFlightRequests: 5,
-      idempotent: true, // 确保幂等性
-      compression: CompressionTypes.GZIP
-    });
-  }
-  
-  async publishMessage(topic: string, message: MessagePayload): Promise<void> {
-    await this.producer.send({
-      topic,
-      messages: [{
-        key: message.key,
-        value: JSON.stringify(message.payload),
-        headers: message.headers,
-        partition: message.partition,
-        timestamp: message.timestamp?.toString()
-      }]
-    });
-  }
-  
-  async publishBatch(topic: string, messages: MessagePayload[]): Promise<void> {
-    const kafkaMessages = messages.map(msg => ({
-      key: msg.key,
-      value: JSON.stringify(msg.payload),
-      headers: msg.headers,
-      partition: msg.partition
-    }));
-    
-    await this.producer.sendBatch({
-      topicMessages: [{
-        topic,
-        messages: kafkaMessages
-      }]
-    });
-  }
-  
-  async publishWithTransaction(
-    operations: Array<{ topic: string; messages: MessagePayload[] }>
-  ): Promise<void> {
-    const transaction = await this.producer.transaction();
+  async publishMessage(request: PublishMessageRequest): Promise<PublishMessageResponse> {
+    const stream = `mq:${request.queue}`;
+    const messageData = {
+      id: generateId(),
+      payload: JSON.stringify(request.payload),
+      headers: JSON.stringify(request.headers || {}),
+      tenant_id: request.tenantId,
+      created_at: Date.now().toString()
+    };
     
     try {
-      for (const operation of operations) {
-        await transaction.send({
-          topic: operation.topic,
-          messages: operation.messages.map(msg => ({
-            key: msg.key,
-            value: JSON.stringify(msg.payload),
-            headers: msg.headers
-          }))
-        });
-      }
+      // 发布到Redis Stream
+      const messageId = await this.redis.xadd(
+        stream,
+        '*', // 自动生成ID
+        ...Object.entries(messageData).flat()
+      );
       
-      await transaction.commit();
+      // 记录审计日志 (服务间调用)
+      await this.auditService.logOperation({
+        operation: 'message_published',
+        resource: `queue:${request.queue}`,
+        tenantId: request.tenantId,
+        details: { messageId, size: JSON.stringify(request.payload).length }
+      });
+      
+      return {
+        messageId,
+        queue: request.queue,
+        publishedAt: new Date()
+      };
     } catch (error) {
-      await transaction.abort();
-      throw error;
+      throw new MessagePublishException(
+        `Failed to publish message to queue ${request.queue}`,
+        error
+      );
     }
   }
 }
 ```
 
-### Kafka消费者
+### Redis Streams消息消费
 ```typescript
 @Injectable()
-export class KafkaConsumerService {
-  private kafka: Kafka;
-  private consumers: Map<string, Consumer> = new Map();
+export class MessageConsumer {
+  private activeConsumers: Map<string, boolean> = new Map();
   
-  async createConsumer(config: KafkaConsumerConfig): Promise<void> {
-    const consumer = this.kafka.consumer({
-      groupId: config.consumerGroup,
-      sessionTimeout: config.sessionTimeoutMs || 30000,
-      heartbeatInterval: config.heartbeatIntervalMs || 3000,
-      maxWaitTimeInMs: 5000,
-      allowAutoTopicCreation: false
-    });
-    
-    await consumer.subscribe({
-      topics: config.topics,
-      fromBeginning: config.offsetResetPolicy === 'earliest'
-    });
-    
-    await consumer.run({
-      autoCommit: false,
-      partitionsConsumedConcurrently: config.maxConcurrency || 1,
-      eachMessage: async ({ topic, partition, message }) => {
-        await this.processMessage({
-          topic,
-          partition,
-          offset: message.offset,
-          key: message.key?.toString(),
-          value: message.value?.toString(),
-          headers: message.headers,
-          timestamp: message.timestamp
-        }, config);
+  constructor(
+    private readonly redis: Redis,
+    private readonly notificationService: NotificationService // 服务间调用
+  ) {}
+  
+  async createConsumerGroup(queue: string, group: string): Promise<void> {
+    const stream = `mq:${queue}`;
+    try {
+      await this.redis.xgroup('CREATE', stream, group, '0', 'MKSTREAM');
+    } catch (error) {
+      // 忽略已存在错误
+      if (!error.message.includes('BUSYGROUP')) {
+        throw error;
       }
-    });
-    
-    this.consumers.set(config.consumerGroup, consumer);
+    }
   }
   
-  private async processMessage(
-    message: KafkaMessage, 
-    config: KafkaConsumerConfig
-  ): Promise<void> {
-    const startTime = Date.now();
-    let retryCount = 0;
+  async startConsumer(config: ConsumerConfig): Promise<void> {
+    const consumerKey = `${config.queue}:${config.group}:${config.consumer}`;
+    const stream = `mq:${config.queue}`;
     
-    while (retryCount <= config.maxRetryAttempts) {
+    if (this.activeConsumers.get(consumerKey)) {
+      throw new Error(`Consumer ${consumerKey} already running`);
+    }
+    
+    this.activeConsumers.set(consumerKey, true);
+    
+    // 消费循环
+    while (this.activeConsumers.get(consumerKey)) {
       try {
-        await this.executeHandler(message, config.handlerConfig);
+        const results = await this.redis.xreadgroup(
+          'GROUP', config.group, config.consumer,
+          'COUNT', 10,
+          'BLOCK', 1000,
+          'STREAMS', stream, '>'
+        );
         
-        // 记录成功消费
-        await this.recordConsumption(message, 'success', Date.now() - startTime);
-        
-        // 提交offset
-        await this.commitMessage(message, config);
-        break;
+        if (results && results.length > 0) {
+          const [, messages] = results[0];
+          await this.processMessages(messages, config);
+        }
         
       } catch (error) {
-        retryCount++;
-        
-        if (retryCount > config.maxRetryAttempts) {
-          // 发送到死信队列
-          await this.sendToDeadLetterQueue(message, error, config);
-          await this.recordConsumption(message, 'failed', Date.now() - startTime, error);
-        } else {
-          // 等待重试
-          await this.delay(config.retryDelayMs * Math.pow(2, retryCount - 1));
-        }
+        console.error('Consumer error:', error);
+        await this.delay(5000);
       }
+    }
+  }
+  
+  private async processMessages(
+    messages: Array<[string, string[]]>,
+    config: ConsumerConfig
+  ): Promise<void> {
+    for (const [messageId, fields] of messages) {
+      try {
+        const messageData = this.parseFields(fields);
+        
+        // 根据消息类型路由到对应服务
+        await this.routeMessage(messageData, config);
+        
+        // 确认消息处理完成
+        await this.redis.xack(`mq:${config.queue}`, config.group, messageId);
+        
+      } catch (error) {
+        console.error('Message processing error:', error);
+        // 消息保持pending状态等待重试
+      }
+    }
+  }
+  
+  private async routeMessage(message: any, config: ConsumerConfig): Promise<void> {
+    const payload = JSON.parse(message.payload);
+    
+    // 根据消息类型调用对应服务
+    switch (payload.type) {
+      case 'user_notification':
+        await this.notificationService.sendNotification(payload.data);
+        break;
+      case 'audit_log':
+        await this.auditService.createLog(payload.data);
+        break;
+      default:
+        console.warn(`Unknown message type: ${payload.type}`);
     }
   }
 }
@@ -1085,67 +1113,138 @@ enum MessageQueueErrorCode {
 }
 ```
 
-## 部署配置
-
-### 环境变量
-```env
-# Kafka配置
-KAFKA_BROKERS=localhost:9092,localhost:9093,localhost:9094
-KAFKA_CLIENT_ID=message-queue-service
-KAFKA_COMPRESSION_TYPE=gzip
-KAFKA_BATCH_SIZE=16384
-KAFKA_LINGER_MS=5
-
-# Redis配置
-REDIS_CLUSTER_NODES=localhost:7001,localhost:7002,localhost:7003
-REDIS_PASSWORD=your_redis_password
-REDIS_MAX_RETRIES=3
-
-# 数据库配置
-DATABASE_URL=postgresql://user:password@localhost:5432/messagequeue
-
-# 监控配置
-METRICS_ENABLED=true
-PROMETHEUS_PORT=9465
-HEALTH_CHECK_PORT=8081
-
-# 性能调优
-MAX_CONCURRENT_CONSUMERS=10
-MESSAGE_BATCH_SIZE=100
-PROCESSING_TIMEOUT_MS=30000
-```
+## 标准版本部署配置
 
 ### Docker Compose配置
+**标准版本**: 共享基础设施，避免独立组件
+
 ```yaml
+# docker-compose.yml (项目根目录)
 version: '3.8'
 services:
   message-queue-service:
-    build: .
+    build: ./message-queue-service
     ports:
       - "3010:3010"
-      - "9465:9465"
     environment:
-      - KAFKA_BROKERS=kafka1:9092,kafka2:9092,kafka3:9092
-      - REDIS_CLUSTER_NODES=redis1:6379,redis2:6379,redis3:6379
+      # 共享数据库连接
+      - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+      # 共享Redis连接
+      - REDIS_URL=redis://redis:6379/5  # 专用数据库5
+      # 服务发现 (Docker Compose内置)
+      - AUTH_SERVICE_URL=http://auth-service:3001
+      - USER_SERVICE_URL=http://user-management-service:3003
+      - AUDIT_SERVICE_URL=http://audit-service:3008
+      - NOTIFICATION_SERVICE_URL=http://notification-service:3005
+      # 性能配置
+      - MESSAGE_BATCH_SIZE=50
+      - MAX_CONCURRENT_CONSUMERS=5
+      - PROCESSING_TIMEOUT_MS=15000
     depends_on:
-      - kafka1
-      - kafka2
-      - kafka3
-      - redis1
-      - redis2
-      - redis3
+      - postgres
+      - redis
+      - auth-service
+    networks:
+      - platform-network
       
-  kafka1:
-    image: confluentinc/cp-kafka:latest
+  # 共享基础设施
+  postgres:
+    image: postgres:15
     environment:
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka1:9092
-      KAFKA_BROKER_ID: 1
+      - POSTGRES_DB=platform
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
       
-  redis1:
+  redis:
     image: redis:7-alpine
-    command: redis-server --cluster-enabled yes --cluster-config-file nodes.conf --cluster-node-timeout 5000 --appendonly yes
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
+  
+networks:
+  platform-network:
+    driver: bridge
 ```
+
+### 环境变量配置
+```env
+# 标准版本环境变量
+NODE_ENV=production
+PORT=3010
+
+# 共享数据库
+DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+
+# 专用Redis命名空间
+REDIS_URL=redis://redis:6379/5
+REDIS_KEY_PREFIX=mq:
+
+# 服务间通信
+INTERNAL_SERVICE_TOKEN=your-internal-service-token
+SERVICE_DISCOVERY_MODE=docker-compose
+
+# 性能配置 (标准版本优化)
+MAX_MESSAGE_SIZE=1048576  # 1MB
+DEFAULT_TTL=604800       # 7天
+MAX_QUEUE_LENGTH=10000
+CONSUMER_TIMEOUT=30000
+
+# 监控配置
+METRICS_ENABLED=true
+HEALTH_CHECK_INTERVAL=30
+```
+
+### 健康检查集成
+```typescript
+@Controller('/health')
+export class HealthController {
+  constructor(
+    private readonly redis: Redis,
+    private readonly prisma: PrismaService
+  ) {}
+  
+  @Get()
+  async healthCheck(): Promise<HealthStatus> {
+    const checks = await Promise.allSettled([
+      this.checkRedis(),
+      this.checkDatabase(),
+      this.checkQueues()
+    ]);
+    
+    const status = checks.every(check => 
+      check.status === 'fulfilled' && check.value.healthy
+    ) ? 'healthy' : 'unhealthy';
+    
+    return {
+      service: 'message-queue-service',
+      status,
+      timestamp: new Date(),
+      checks: {
+        redis: checks[0].status === 'fulfilled' ? checks[0].value : { healthy: false },
+        database: checks[1].status === 'fulfilled' ? checks[1].value : { healthy: false },
+        queues: checks[2].status === 'fulfilled' ? checks[2].value : { healthy: false }
+      }
+    };
+  }
+  
+  private async checkRedis(): Promise<{ healthy: boolean; details?: any }> {
+    try {
+      const pong = await this.redis.ping();
+      return { 
+        healthy: pong === 'PONG',
+        details: { latency: Date.now() }
+      };
+    } catch (error) {
+      return { healthy: false, details: { error: error.message } };
+    }
+  }
+}
 
 ## 性能优化
 
@@ -1299,4 +1398,46 @@ export class MessageAccessControl {
 }
 ```
 
-通过这样的设计，消息队列服务能够提供高性能、高可用、可扩展的消息传递能力，满足企业级应用的各种消息通信需求。
+---
+
+## 📊 开发阶段完成情况总结
+
+### 1.1 需求分析阶段 ✅ 已完成
+- ✅ 业务需求收集：明确消息队列在微服务架构中的核心作用
+- ✅ 技术需求分析：定义100租户+10万用户性能指标
+- ✅ 用户故事编写：覆盖管理员、开发者、运维人员使用场景
+- ✅ 验收标准定义：功能、性能、可靠性、集成四个维度标准
+- ✅ 架构设计文档：基于Redis Streams的标准版本架构
+
+### 1.2 项目规划阶段 ✅ 已完成
+- ✅ 项目计划制定：Week 3-4开发计划，优先级⭐⭐⭐⭐
+- ✅ 里程碑设置：6个明确的周级里程碑和交付节点
+- ✅ 资源分配：端口3010、512MB内存、100GB存储、14个API端点
+- ✅ 风险评估：技术、依赖、集成、性能四个维度风险分析
+- ✅ 技术栈选择：Redis Streams + PostgreSQL，符合标准版本要求
+
+### 1.3 架构设计阶段 ✅ 已完成
+- ✅ 系统架构设计：简化的Redis Streams架构，避免Kafka复杂性
+- ✅ 数据库设计：完整的PostgreSQL表结构设计(4个核心表)
+- ✅ API设计：14个RESTful接口，涵盖4个功能模块
+- ✅ 安全架构设计：服务间认证、消息加密、访问控制
+- ✅ 性能规划：针对标准版本规模的批量处理和连接池设计
+
+## 🚀 主要改进点
+
+### 技术架构优化
+1. **移除过度复杂性**：从Kafka混合架构简化为Redis Streams单一架构
+2. **统一基础设施**：共享PostgreSQL和Redis实例，降低运维复杂度
+3. **Docker Compose优化**：避免K8S，使用容器编排进行服务发现
+
+### 服务集成增强
+1. **内部API设计**：定义与其他11个服务的消息交互接口
+2. **统一错误处理**：标准化错误响应格式和重试机制
+3. **健康检查集成**：与监控服务(3007)深度集成
+
+### 标准版本适配
+1. **性能目标明确**：日处理100万消息，支持1000 QPS
+2. **资源配置优化**：512MB内存分配，适合8GB总内存限制
+3. **部署简化**：单一Docker Compose文件，避免多组件依赖
+
+通过标准版本优化，消息队列服务现在具备了生产级别的架构设计、明确的开发路径和完整的集成方案，能够在4周开发计划中高质量交付。
