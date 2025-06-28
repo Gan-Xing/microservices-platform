@@ -1,6 +1,6 @@
 # 文件存储服务开发文档 - 标准版本
 
-## 服务概述
+## 🎯 服务概述
 
 文件存储服务是微服务平台的资源管理核心，面向**100租户+10万用户**的企业级生产系统，负责文件上传、存储、访问控制、CDN加速、媒体处理等功能，为整个平台提供统一的文件管理能力。
 
@@ -14,7 +14,7 @@
 - **依赖服务**: 认证服务(3001) + 权限服务(3002) + 用户服务(3003)
 - **内存分配**: 512MB (标准版本8GB总内存中的6.4%)
 
-## 技术栈
+## 🛠️ 技术栈
 
 ### 后端技术
 - **框架**: NestJS 10.x + TypeScript 5.x
@@ -39,7 +39,7 @@
 - **指标**: Prometheus + Grafana
 - **健康检查**: NestJS Health Check
 
-## 核心功能模块
+## 📋 完整功能列表
 
 ### 1. 文件元数据管理
 ```typescript
@@ -295,7 +295,178 @@ interface ScanResult {
 }
 ```
 
-## 数据库设计
+## 🔗 API设计
+
+### RESTful API 端点
+```typescript
+// 文件上传 API
+@Controller('files')
+export class FileController {
+  @Post('upload')
+  @UseInterceptors(FileInterceptor('file'))
+  @ApiConsumes('multipart/form-data')
+  async uploadFile(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() options: UploadOptionsDto,
+    @Req() req: AuthenticatedRequest
+  ) {
+    return this.fileService.uploadSingle(file, {
+      ...options,
+      tenantId: req.tenantId,
+      userId: req.user.id
+    })
+  }
+
+  @Post('upload/multiple')
+  @UseInterceptors(FilesInterceptor('files', 10))
+  async uploadMultipleFiles(
+    @UploadedFiles() files: Express.Multer.File[],
+    @Body() options: UploadOptionsDto,
+    @Req() req: AuthenticatedRequest
+  ) {
+    return this.fileService.uploadMultiple(files, {
+      ...options,
+      tenantId: req.tenantId,
+      userId: req.user.id
+    })
+  }
+
+  @Post('upload/chunked/init')
+  async initChunkedUpload(@Body() metadata: ChunkedUploadInitDto) {
+    return this.chunkService.initializeUpload(metadata)
+  }
+
+  @Post('upload/chunked/:uploadId/chunk/:chunkNumber')
+  @UseInterceptors(FileInterceptor('chunk'))
+  async uploadChunk(
+    @Param('uploadId') uploadId: string,
+    @Param('chunkNumber') chunkNumber: number,
+    @UploadedFile() chunk: Express.Multer.File
+  ) {
+    return this.chunkService.uploadChunk(uploadId, chunkNumber, chunk.buffer)
+  }
+
+  @Post('upload/chunked/:uploadId/complete')
+  async completeChunkedUpload(@Param('uploadId') uploadId: string) {
+    return this.chunkService.completeUpload(uploadId)
+  }
+
+  @Delete('upload/chunked/:uploadId')
+  async abortChunkedUpload(@Param('uploadId') uploadId: string) {
+    return this.chunkService.abortUpload(uploadId)
+  }
+}
+
+// 文件管理 API
+@Controller('files')
+export class FileManagementController {
+  @Get()
+  async listFiles(@Query() query: ListFilesDto, @Req() req: AuthenticatedRequest) {
+    return this.fileService.listUserFiles(req.user.id, req.tenantId, query)
+  }
+
+  @Get(':id')
+  async getFile(@Param('id') id: string) {
+    return this.fileService.getFileById(id)
+  }
+
+  @Get(':id/download')
+  async downloadFile(@Param('id') id: string, @Res() res: Response) {
+    const downloadUrl = await this.fileService.getDownloadUrl(id)
+    res.redirect(downloadUrl)
+  }
+
+  @Get(':id/stream')
+  async streamFile(@Param('id') id: string, @Res() res: Response) {
+    const stream = await this.fileService.getFileStream(id)
+    stream.pipe(res)
+  }
+
+  @Put(':id')
+  async updateFile(@Param('id') id: string, @Body() updateData: UpdateFileDto) {
+    return this.fileService.updateFile(id, updateData)
+  }
+
+  @Delete(':id')
+  async deleteFile(@Param('id') id: string) {
+    return this.fileService.deleteFile(id)
+  }
+
+  @Post(':id/copy')
+  async copyFile(@Param('id') id: string, @Body() options: CopyFileDto) {
+    return this.fileService.copyFile(id, options)
+  }
+
+  @Post(':id/move')
+  async moveFile(@Param('id') id: string, @Body() options: MoveFileDto) {
+    return this.fileService.moveFile(id, options)
+  }
+}
+
+// 文件分享 API
+@Controller('shares')
+export class FileShareController {
+  @Post()
+  async createShare(@Body() shareData: CreateShareDto, @Req() req: AuthenticatedRequest) {
+    return this.shareService.createShareLink(shareData.fileId, {
+      ...shareData,
+      createdBy: req.user.id
+    })
+  }
+
+  @Get(':token')
+  async getShareInfo(@Param('token') token: string, @Body() password?: string) {
+    return this.shareService.validateShareLink(token, password)
+  }
+
+  @Get(':token/download')
+  async downloadSharedFile(@Param('token') token: string, @Body() password?: string) {
+    const share = await this.shareService.validateShareLink(token, password)
+    return this.fileService.getDownloadUrl(share.fileId)
+  }
+
+  @Delete(':id')
+  async deleteShare(@Param('id') id: string) {
+    return this.shareService.deleteShare(id)
+  }
+}
+
+// 媒体处理 API
+@Controller('media')
+export class MediaProcessingController {
+  @Post('images/:id/thumbnails')
+  async generateThumbnails(@Param('id') id: string, @Body() sizes: ImageSize[]) {
+    return this.imageService.generateThumbnails(id, sizes)
+  }
+
+  @Post('images/:id/resize')
+  async resizeImage(@Param('id') id: string, @Body() options: ResizeImageDto) {
+    return this.imageService.resizeImage(id, options.width, options.height, options)
+  }
+
+  @Post('images/:id/convert')
+  async convertImage(@Param('id') id: string, @Body() options: ConvertImageDto) {
+    return this.imageService.convertFormat(id, options.format)
+  }
+
+  @Post('videos/:id/thumbnail')
+  async generateVideoThumbnail(@Param('id') id: string, @Body() options: VideoThumbnailDto) {
+    return this.videoService.generateThumbnail(id, options.timestamp)
+  }
+
+  @Post('videos/:id/transcode')
+  async transcodeVideo(@Param('id') id: string, @Body() options: TranscodeVideoDto) {
+    return this.videoService.transcodeVideo(id, options.format, options.quality)
+  }
+
+  @Post('documents/:id/convert')
+  async convertDocument(@Param('id') id: string, @Body() options: ConvertDocumentDto) {
+    return this.documentService.convertToPdf(id)
+  }
+}
+```
+
+## 🗄️ 数据库设计
 
 ### PostgreSQL 表结构
 ```sql
@@ -477,178 +648,44 @@ interface RedisUploadCache {
 }
 ```
 
-## API 设计
+## 🏗️ 核心架构实现
 
-### RESTful API 端点
+## 🔄 服务间交互设计
+
+### 依赖关系图
+```
+文件存储服务 (3006)
+    ↓ 用户身份验证
+认证授权服务 (3001)
+    ↓ 权限检查
+权限管理服务 (3002)
+    ↓ 用户信息
+用户管理服务 (3003)
+    ↓ 审计日志
+日志审计服务 (3008)
+    ↓ 任务调度
+任务调度服务 (3009)
+```
+
+### 内部API接口设计
+
+**服务间认证**: 使用X-Service-Token头部
 ```typescript
-// 文件上传 API
-@Controller('files')
-export class FileController {
-  @Post('upload')
-  @UseInterceptors(FileInterceptor('file'))
-  @ApiConsumes('multipart/form-data')
-  async uploadFile(
-    @UploadedFile() file: Express.Multer.File,
-    @Body() options: UploadOptionsDto,
-    @Req() req: AuthenticatedRequest
-  ) {
-    return this.fileService.uploadSingle(file, {
-      ...options,
-      tenantId: req.tenantId,
-      userId: req.user.id
-    })
-  }
-
-  @Post('upload/multiple')
-  @UseInterceptors(FilesInterceptor('files', 10))
-  async uploadMultipleFiles(
-    @UploadedFiles() files: Express.Multer.File[],
-    @Body() options: UploadOptionsDto,
-    @Req() req: AuthenticatedRequest
-  ) {
-    return this.fileService.uploadMultiple(files, {
-      ...options,
-      tenantId: req.tenantId,
-      userId: req.user.id
-    })
-  }
-
-  @Post('upload/chunked/init')
-  async initChunkedUpload(@Body() metadata: ChunkedUploadInitDto) {
-    return this.chunkService.initializeUpload(metadata)
-  }
-
-  @Post('upload/chunked/:uploadId/chunk/:chunkNumber')
-  @UseInterceptors(FileInterceptor('chunk'))
-  async uploadChunk(
-    @Param('uploadId') uploadId: string,
-    @Param('chunkNumber') chunkNumber: number,
-    @UploadedFile() chunk: Express.Multer.File
-  ) {
-    return this.chunkService.uploadChunk(uploadId, chunkNumber, chunk.buffer)
-  }
-
-  @Post('upload/chunked/:uploadId/complete')
-  async completeChunkedUpload(@Param('uploadId') uploadId: string) {
-    return this.chunkService.completeUpload(uploadId)
-  }
-
-  @Delete('upload/chunked/:uploadId')
-  async abortChunkedUpload(@Param('uploadId') uploadId: string) {
-    return this.chunkService.abortUpload(uploadId)
-  }
-}
-
-// 文件管理 API
-@Controller('files')
-export class FileManagementController {
-  @Get()
-  async listFiles(@Query() query: ListFilesDto, @Req() req: AuthenticatedRequest) {
-    return this.fileService.listUserFiles(req.user.id, req.tenantId, query)
-  }
-
-  @Get(':id')
-  async getFile(@Param('id') id: string) {
-    return this.fileService.getFileById(id)
-  }
-
-  @Get(':id/download')
-  async downloadFile(@Param('id') id: string, @Res() res: Response) {
-    const downloadUrl = await this.fileService.getDownloadUrl(id)
-    res.redirect(downloadUrl)
-  }
-
-  @Get(':id/stream')
-  async streamFile(@Param('id') id: string, @Res() res: Response) {
-    const stream = await this.fileService.getFileStream(id)
-    stream.pipe(res)
-  }
-
-  @Put(':id')
-  async updateFile(@Param('id') id: string, @Body() updateData: UpdateFileDto) {
-    return this.fileService.updateFile(id, updateData)
-  }
-
-  @Delete(':id')
-  async deleteFile(@Param('id') id: string) {
-    return this.fileService.deleteFile(id)
-  }
-
-  @Post(':id/copy')
-  async copyFile(@Param('id') id: string, @Body() options: CopyFileDto) {
-    return this.fileService.copyFile(id, options)
-  }
-
-  @Post(':id/move')
-  async moveFile(@Param('id') id: string, @Body() options: MoveFileDto) {
-    return this.fileService.moveFile(id, options)
-  }
-}
-
-// 文件分享 API
-@Controller('shares')
-export class FileShareController {
-  @Post()
-  async createShare(@Body() shareData: CreateShareDto, @Req() req: AuthenticatedRequest) {
-    return this.shareService.createShareLink(shareData.fileId, {
-      ...shareData,
-      createdBy: req.user.id
-    })
-  }
-
-  @Get(':token')
-  async getShareInfo(@Param('token') token: string, @Body() password?: string) {
-    return this.shareService.validateShareLink(token, password)
-  }
-
-  @Get(':token/download')
-  async downloadSharedFile(@Param('token') token: string, @Body() password?: string) {
-    const share = await this.shareService.validateShareLink(token, password)
-    return this.fileService.getDownloadUrl(share.fileId)
-  }
-
-  @Delete(':id')
-  async deleteShare(@Param('id') id: string) {
-    return this.shareService.deleteShare(id)
-  }
-}
-
-// 媒体处理 API
-@Controller('media')
-export class MediaProcessingController {
-  @Post('images/:id/thumbnails')
-  async generateThumbnails(@Param('id') id: string, @Body() sizes: ImageSize[]) {
-    return this.imageService.generateThumbnails(id, sizes)
-  }
-
-  @Post('images/:id/resize')
-  async resizeImage(@Param('id') id: string, @Body() options: ResizeImageDto) {
-    return this.imageService.resizeImage(id, options.width, options.height, options)
-  }
-
-  @Post('images/:id/convert')
-  async convertImage(@Param('id') id: string, @Body() options: ConvertImageDto) {
-    return this.imageService.convertFormat(id, options.format)
-  }
-
-  @Post('videos/:id/thumbnail')
-  async generateVideoThumbnail(@Param('id') id: string, @Body() options: VideoThumbnailDto) {
-    return this.videoService.generateThumbnail(id, options.timestamp)
-  }
-
-  @Post('videos/:id/transcode')
-  async transcodeVideo(@Param('id') id: string, @Body() options: TranscodeVideoDto) {
-    return this.videoService.transcodeVideo(id, options.format, options.quality)
-  }
-
-  @Post('documents/:id/convert')
-  async convertDocument(@Param('id') id: string, @Body() options: ConvertDocumentDto) {
-    return this.documentService.convertToPdf(id)
-  }
+// 内部服务调用示例
+headers: {
+  'X-Service-Token': process.env.INTERNAL_SERVICE_TOKEN,
+  'X-Tenant-ID': tenantId,
+  'X-User-ID': userId
 }
 ```
 
-## 存储策略配置
+**核心内部端点**:
+- `POST /internal/files/validate` - 验证文件权限
+- `GET /internal/files/{id}/metadata` - 获取文件元数据
+- `POST /internal/files/{id}/audit` - 记录访问日志
+- `GET /internal/files/usage/{tenantId}` - 获取租户存储使用量
+
+### 存储策略配置
 
 ### 多存储后端配置
 ```typescript
@@ -730,7 +767,366 @@ const storageConfig: StorageConfiguration = {
 }
 ```
 
-## 📋 项目规划 (标准版本)
+## ⚡ 性能优化
+
+### 文件上传优化
+```typescript
+// 分片上传性能优化
+class ChunkedUploadOptimizer {
+  private readonly OPTIMAL_CHUNK_SIZE = 5 * 1024 * 1024; // 5MB
+  private readonly MAX_CONCURRENT_UPLOADS = 3;
+  
+  async optimizeUpload(fileSize: number): Promise<ChunkConfig> {
+    const chunkSize = this.calculateOptimalChunkSize(fileSize);
+    const totalChunks = Math.ceil(fileSize / chunkSize);
+    
+    return {
+      chunkSize,
+      totalChunks,
+      concurrency: Math.min(this.MAX_CONCURRENT_UPLOADS, totalChunks)
+    };
+  }
+  
+  private calculateOptimalChunkSize(fileSize: number): number {
+    if (fileSize < 50 * 1024 * 1024) return 1024 * 1024; // 1MB for small files
+    if (fileSize < 500 * 1024 * 1024) return this.OPTIMAL_CHUNK_SIZE; // 5MB for medium files
+    return 10 * 1024 * 1024; // 10MB for large files
+  }
+}
+```
+
+### 缓存策略
+```typescript
+// 多层缓存策略
+class FileStorageCacheManager {
+  // L1: 内存缓存 (最近访问的文件元数据)
+  private memoryCache = new Map<string, FileEntity>();
+  
+  // L2: Redis缓存 (文件权限和分享链接)
+  async getCachedPermissions(userId: string, fileId: string): Promise<string[]> {
+    const key = `permissions:${userId}:${fileId}`;
+    const cached = await this.redis.get(key);
+    if (cached) return JSON.parse(cached);
+    
+    // 从数据库查询并缓存
+    const permissions = await this.permissionService.getUserFilePermissions(userId, fileId);
+    await this.redis.setex(key, 300, JSON.stringify(permissions)); // 5分钟缓存
+    return permissions;
+  }
+  
+  // L3: CDN缓存 (静态文件内容)
+  async getCDNUrl(fileId: string): Promise<string> {
+    const file = await this.getFileMetadata(fileId);
+    if (file.isPublic && file.size < 10 * 1024 * 1024) { // 10MB以下公开文件使用CDN
+      return `${process.env.CDN_DOMAIN}/files/${file.tenantId}/${file.storageKey}`;
+    }
+    return this.storageProvider.getDownloadUrl(file.storageKey);
+  }
+}
+```
+
+### 并发控制
+```typescript
+// 上传并发控制
+class UploadConcurrencyManager {
+  private activeUploads = new Map<string, number>();
+  private readonly MAX_CONCURRENT_UPLOADS_PER_USER = 5;
+  
+  async acquireUploadSlot(userId: string): Promise<boolean> {
+    const current = this.activeUploads.get(userId) || 0;
+    if (current >= this.MAX_CONCURRENT_UPLOADS_PER_USER) {
+      return false;
+    }
+    
+    this.activeUploads.set(userId, current + 1);
+    return true;
+  }
+  
+  releaseUploadSlot(userId: string): void {
+    const current = this.activeUploads.get(userId) || 0;
+    if (current > 0) {
+      this.activeUploads.set(userId, current - 1);
+    }
+  }
+}
+```
+
+## 🛡️ 安全措施
+
+### 数据安全
+- **数据加密**: 敏感数据AES-256加密存储
+- **传输安全**: HTTPS强制，TLS 1.3协议
+- **数据脱敏**: 日志中隐藏敏感信息
+- **备份安全**: 加密备份，异地存储
+
+### 访问控制
+- **身份认证**: JWT令牌验证，支持令牌刷新
+- **权限控制**: 基于RBAC的细粒度权限管理
+- **API安全**: 请求频率限制，防止暴力攻击
+- **输入验证**: 严格的参数验证，防止注入攻击
+
+### 文件安全
+```typescript
+// 文件安全扫描
+class FileSecurityScanner {
+  async scanFile(fileId: string): Promise<SecurityScanResult> {
+    const file = await this.fileService.getFileById(fileId);
+    
+    const results = await Promise.allSettled([
+      this.virusScanner.scanFile(file.storageKey),
+      this.malwareDetector.detectMalware(file),
+      this.contentValidator.validateContent(file)
+    ]);
+    
+    return {
+      fileId,
+      isClean: results.every(r => r.status === 'fulfilled' && r.value.isClean),
+      threats: results.flatMap(r => r.status === 'fulfilled' ? r.value.threats : []),
+      scanDate: new Date()
+    };
+  }
+  
+  async quarantineFile(fileId: string, reason: string): Promise<void> {
+    await this.fileService.updateFileStatus(fileId, 'quarantined');
+    await this.auditService.logFileQuarantine(fileId, reason);
+    await this.notificationService.notifySecurityTeam(fileId, reason);
+  }
+}
+```
+
+### 内部服务安全
+- **服务认证**: X-Service-Token内部服务认证
+- **网络隔离**: Docker网络隔离，最小权限原则
+- **密钥管理**: 环境变量管理敏感配置
+- **审计日志**: 完整的操作审计链路
+
+## 📈 监控和告警
+
+### Prometheus指标收集
+```typescript
+// 文件存储服务核心指标
+const fileStorageMetrics = {
+  // 业务指标
+  'file_storage_operations_total': Counter,
+  'file_storage_operation_duration_seconds': Histogram,
+  'file_storage_errors_total': Counter,
+  'file_storage_size_bytes': Gauge,
+  'file_upload_success_total': Counter,
+  'file_download_success_total': Counter,
+
+  // 系统指标
+  'file_storage_memory_usage_bytes': Gauge,
+  'file_storage_cpu_usage_percent': Gauge,
+  'file_storage_active_connections': Gauge,
+  'file_storage_disk_usage_bytes': Gauge
+}
+```
+
+### 告警规则
+```yaml
+groups:
+  - name: file-storage-service-alerts
+    rules:
+      - alert: FileStorageHighErrorRate
+        expr: rate(file_storage_errors_total[5m]) / rate(file_storage_operations_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "文件存储服务错误率过高"
+          
+      - alert: FileStorageHighDiskUsage
+        expr: file_storage_disk_usage_bytes / file_storage_disk_total_bytes > 0.85
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "文件存储磁盘使用率过高"
+          
+      - alert: FileStorageSlowUpload
+        expr: histogram_quantile(0.95, rate(file_storage_operation_duration_seconds_bucket{operation="upload"}[5m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "文件上传响应时间过慢"
+```
+
+### 健康检查
+```typescript
+@Controller('health')
+export class HealthController {
+  @Get()
+  async checkHealth(): Promise<HealthStatus> {
+    const checks = await Promise.allSettled([
+      this.checkDatabase(),
+      this.checkRedis(),
+      this.checkMinIO(),
+      this.checkDiskSpace()
+    ]);
+
+    return {
+      status: checks.every(c => c.status === 'fulfilled') ? 'healthy' : 'unhealthy',
+      service: 'file-storage-service',
+      dependencies: {
+        database: checks[0].status === 'fulfilled',
+        redis: checks[1].status === 'fulfilled',
+        minio: checks[2].status === 'fulfilled',
+        diskSpace: checks[3].status === 'fulfilled'
+      },
+      timestamp: new Date().toISOString()
+    };
+  }
+}
+```
+
+## 🐳 部署配置
+
+### Docker Compose 配置 (标准版本)
+```yaml
+version: '3.8'
+
+services:
+  file-storage-service:
+    build:
+      context: ./file-storage-service
+      dockerfile: Dockerfile
+    container_name: file-storage-service
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY}
+      - MINIO_ENDPOINT=minio:9000
+      - MAX_FILE_SIZE=100MB
+      - ALLOWED_MIME_TYPES=image/*,video/*,application/pdf,text/*
+    volumes:
+      - file_storage_data:/app/storage
+      - ./logs:/app/logs
+    depends_on:
+      - postgres
+      - redis
+      - minio
+    networks:
+      - platform-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3006/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # MinIO对象存储 (标准版本)
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ACCESS_KEY=${MINIO_ACCESS_KEY:-minioadmin}
+      - MINIO_SECRET_KEY=${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    networks:
+      - platform-network
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+volumes:
+  file_storage_data:
+    driver: local
+  minio_data:
+    driver: local
+
+networks:
+  platform-network:
+    external: true
+```
+
+## 🧪 测试策略
+
+### 单元测试
+```typescript
+describe('FileStorageService', () => {
+  it('should upload file successfully', async () => {
+    const file = createMockFile('test.jpg', 'image/jpeg', 1024);
+    const result = await service.uploadSingle(file, testOptions);
+    
+    expect(result).toBeDefined();
+    expect(result.status).toBe('ready');
+    expect(result.filename).toBe('test.jpg');
+  });
+
+  it('should handle large file chunked upload', async () => {
+    const largeFile = createMockFile('large.mp4', 'video/mp4', 100 * 1024 * 1024);
+    const uploadId = await service.initChunkedUpload(largeFile.metadata);
+    
+    expect(uploadId).toBeDefined();
+    expect(uploadId).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it('should enforce file size limits', async () => {
+    const oversizedFile = createMockFile('huge.zip', 'application/zip', 200 * 1024 * 1024);
+    
+    await expect(service.uploadSingle(oversizedFile, testOptions))
+      .rejects.toThrow('File size exceeds maximum allowed size');
+  });
+});
+```
+
+### 集成测试
+```typescript
+describe('FileStorage E2E', () => {
+  it('should integrate with auth and permission services', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/files/upload')
+      .set('Authorization', `Bearer ${validJwtToken}`)
+      .attach('file', testFilePath)
+      .expect(201);
+
+    expect(response.body).toHaveProperty('data');
+    expect(response.body.data).toHaveProperty('id');
+  });
+  
+  it('should handle concurrent uploads properly', async () => {
+    const uploadPromises = Array(5).fill(null).map(() => 
+      request(app.getHttpServer())
+        .post('/api/v1/files/upload')
+        .set('Authorization', `Bearer ${validJwtToken}`)
+        .attach('file', testFilePath)
+    );
+    
+    const responses = await Promise.all(uploadPromises);
+    responses.forEach(response => {
+      expect(response.status).toBe(201);
+    });
+  });
+});
+```
+
+### 性能测试
+- **负载测试**: 支持1000并发上传验证
+- **压力测试**: 极限条件下的稳定性测试
+- **容量测试**: 100TB存储容量验证
+- **网络测试**: 低带宽环境下的上传性能
+
+## 📅 项目规划 (标准版本)
 
 ### 开发里程碑
 
@@ -834,7 +1230,66 @@ headers: {
 - `POST /internal/files/{id}/audit` - 记录访问日志
 - `GET /internal/files/usage/{tenantId}` - 获取租户存储使用量
 
-## 部署方案
+## ✅ 开发完成情况总结
+
+### 当前完成状态
+
+#### ✅ 已完成 (Week 3.1-3.2)
+- **数据库设计**: PostgreSQL表结构完整设计
+- **API设计**: RESTful API端点规范定义
+- **核心功能模块**: 文件CRUD、上传下载、权限控制
+- **存储抽象**: 多存储后端支持架构
+- **安全框架**: 权限控制和安全扫描设计
+
+#### 🔄 进行中 (Week 3.3-3.4)
+- **分片上传**: 大文件分片上传机制
+- **媒体处理**: 图片、视频、文档处理服务
+- **缓存优化**: Redis缓存策略实现
+- **监控集成**: Prometheus指标收集
+- **Docker配置**: 容器化部署配置
+
+#### 🔄 待开发 (Week 3.5-3.7)
+- **服务集成**: 与认证、权限、审计服务联调
+- **性能优化**: 并发控制和缓存策略调优
+- **测试覆盖**: 单元测试和集成测试完善
+- **生产部署**: Docker Compose生产环境配置
+- **文档完善**: API文档和运维手册
+
+### 技术债务和优化点
+
+#### 高优先级
+- **内存管理**: 大文件处理时的内存使用优化
+- **错误处理**: 更完善的错误恢复机制
+- **监控指标**: 更细粒度的业务监控指标
+
+#### 中优先级
+- **缓存策略**: 多层缓存的一致性保证
+- **文件压缩**: 自动文件压缩和解压缩
+- **CDN集成**: 静态文件CDN加速优化
+
+#### 低优先级
+- **AI处理**: 图像识别和内容分析
+- **版本控制**: 文件版本管理增强
+- **批量操作**: 批量文件操作优化
+
+### 下一步行动计划
+
+1. **Week 3.3**: 完成分片上传和媒体处理核心功能
+2. **Week 3.4**: 实现缓存优化和监控集成
+3. **Week 3.5**: 服务间集成测试和性能调优
+4. **Week 3.6**: 完善测试覆盖和文档
+5. **Week 3.7**: 生产环境部署和验收测试
+
+### 成功指标
+- **功能完整性**: 支持所有核心文件操作
+- **性能指标**: 上传响应时间 < 5秒 (10MB文件)
+- **可靠性**: 99.9%文件上传成功率
+- **安全性**: 100%文件安全扫描覆盖
+- **可扩展性**: 支持100租户并发使用
+
+---
+
+**总结**: 文件存储服务作为Week 3的重点开发任务，已完成核心架构设计和API规范定义，正在进行高级功能开发。预计按计划在Week 3结束前完成所有功能开发和测试，为整个微服务平台提供可靠的文件管理能力。
 
 ### Docker Compose 配置 (标准版本)
 
