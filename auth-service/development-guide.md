@@ -1,6 +1,6 @@
 # 认证授权服务开发文档
 
-## 服务定位
+## 🎯 服务概述
 
 面向**100租户+10万用户**的企业级生产系统设计，作为整个微服务平台的安全核心，提供企业级身份认证和权限管理。
 
@@ -11,7 +11,7 @@
 - **开发优先级**: Week 1
 - **服务端口**: 3001
 
-## 技术选型（最佳实践）
+## 🛠️ 技术栈
 
 ### 后端技术
 - **框架**: NestJS 10.x + TypeScript 5.x
@@ -37,7 +37,7 @@
 - **服务发现**: Docker Compose内置网络（不使用Consul）
 - **配置管理**: 环境变量 + Docker Compose（不使用配置中心）
 
-## 完整功能列表
+## 📋 完整功能列表
 
 ### 核心认证功能
 1. **用户认证**
@@ -115,7 +115,7 @@
     - 数据加密存储
     - 隐私保护
 
-## API设计（完整版）
+## 🔗 API设计
 
 ### 用户认证API
 ```typescript
@@ -285,7 +285,7 @@ Authorization: Bearer {access_token}
 ?page=1&limit=20&startDate=2024-01-01&endDate=2024-01-31
 ```
 
-## 数据库设计
+## 🗄️ 数据库设计
 
 ### 用户认证表 (auth_users)
 ```sql
@@ -409,7 +409,9 @@ CREATE TABLE auth.roles (
 );
 ```
 
-## JWT Token设计
+## 🏗️ 核心架构实现
+
+### JWT Token设计
 
 ### Token结构
 ```typescript
@@ -465,7 +467,7 @@ const keyRotationConfig = {
 };
 ```
 
-## 安全策略
+### 安全策略
 
 ### 密码策略
 ```typescript
@@ -519,7 +521,7 @@ const smsConfig = {
 };
 ```
 
-## 缓存策略
+### 缓存策略
 
 ### Redis缓存设计
 ```typescript
@@ -554,7 +556,7 @@ TTL: 30分钟
 Data: 用户权限列表
 ```
 
-## 安全措施
+## 🛡️ 安全措施
 
 ### 数据保护
 - **密码加密**: bcrypt with salt rounds 12
@@ -594,7 +596,7 @@ const securityRules = [
 ];
 ```
 
-## 性能优化
+## ⚡ 性能优化
 
 ### 数据库优化
 ```sql
@@ -641,7 +643,7 @@ export class PermissionService {
 }
 ```
 
-## 项目规划（标准版本）
+## 📅 项目规划
 
 ### 开发时间线
 - **Week 1**: 认证授权服务（端口3001）
@@ -725,7 +727,7 @@ export class PermissionService {
 - 企业级安全功能
 - 监控和告警集成
 
-## 服务间交互设计
+## 🔄 服务间交互设计
 
 ### 内部API端点（微服务间通信）
 
@@ -812,7 +814,7 @@ const retryConfig = {
 };
 ```
 
-## 部署配置
+## 🐳 部署配置
 
 ### Docker配置
 ```dockerfile
@@ -974,7 +976,7 @@ RATE_LIMIT_TTL=60
 RATE_LIMIT_LIMIT=100
 ```
 
-## 监控和告警
+## 📈 监控和告警
 
 ### 健康检查
 ```typescript
@@ -1048,7 +1050,7 @@ export class MetricsService {
 }
 ```
 
-## 测试策略
+## 🧪 测试策略
 
 ### 单元测试
 ```typescript
@@ -1142,7 +1144,7 @@ describe('Security (e2e)', () => {
 });
 ```
 
-## 部署清单
+### 部署清单
 
 ### 生产环境配置
 - **内存需求**: 512MB
@@ -1165,7 +1167,7 @@ describe('Security (e2e)', () => {
 - **内存使用率** > 80%
 - **CPU使用率** > 70%
 
-## 开发完成情况总结
+## ✅ 开发完成情况总结
 
 ### 三个开发阶段完成情况
 
