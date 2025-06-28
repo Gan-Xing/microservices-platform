@@ -1,6 +1,6 @@
 # 用户管理服务开发文档
 
-## 服务定位
+## 🎯 服务概述
 
 面向**100租户+10万用户**的企业级生产系统设计，作为整个微服务平台的用户数据基础。
 
@@ -13,7 +13,7 @@
 - **内存分配**: 512MB（高负载服务）
 - **服务依赖**: 仅PostgreSQL，无其他服务依赖
 
-## 项目管理与开发规划
+## 📅 项目规划
 
 ### 🎯 需求分析阶段 (Requirements Analysis)
 
@@ -183,7 +183,7 @@ POST /internal/users/validate-status - 批量验证用户状态
 - **索引优化**: 关键查询路径索引覆盖
 - **分页优化**: 游标分页，避免OFFSET性能问题
 
-## 服务间交互设计
+## 🔄 服务间交互设计
 
 ### 🔗 内部API接口设计
 
@@ -377,7 +377,7 @@ export class HealthController {
 }
 ```
 
-## 技术选型（最佳实践）
+## 🛠️ 技术栈
 
 ### 后端技术
 - **框架**: NestJS 10.x + TypeScript 5.x
@@ -412,7 +412,7 @@ export class HealthController {
 - ✅ Prometheus + Grafana (基础监控)
 - ✅ Docker Compose (适合100租户规模)
 
-## 完整功能列表
+## 📋 完整功能列表
 
 ### 核心功能
 1. **用户注册/登录/登出**
@@ -482,7 +482,7 @@ export class HealthController {
 - **分页查询优化**
 - **连接池配置**
 
-## API设计（基于API-ENDPOINTS.md标准规范）
+## 🔗 API设计
 
 ### 🎯 API端点总览（57个端点，10个功能模块）
 
@@ -983,7 +983,7 @@ Content-Type: text/plain
 # 返回Prometheus格式的指标数据
 ```
 
-## 数据库设计
+## 🗄️ 数据库设计
 
 ### 用户主表 (users)
 ```sql
@@ -1094,7 +1094,9 @@ CREATE TABLE users.user_group_members (
 );
 ```
 
-## 缓存策略
+## 🏗️ 核心架构实现
+
+### 缓存策略
 
 ### Redis缓存设计（集成缓存服务）
 
@@ -1187,44 +1189,7 @@ private async invalidateUserCaches(userId: string): Promise<void> {
 }
 ```
 
-## 安全措施
-
-### 数据保护
-- **密码加密**: bcrypt with salt rounds 12
-- **敏感信息加密**: AES-256-GCM
-- **个人信息脱敏**: 日志中隐藏敏感信息
-- **SQL注入防护**: Prisma ORM参数化查询
-- **XSS防护**: 输入验证和输出编码
-
-### 接口安全
-- **JWT Token验证**: RS256签名算法
-- **请求频率限制**: 登录接口限制10次/分钟
-- **参数验证**: Class-validator严格验证
-- **CORS配置**: 限制跨域访问
-- **HTTPS强制**: 生产环境强制HTTPS
-
-### 多因素认证
-```typescript
-// TOTP配置
-const totpConfig = {
-  name: 'Platform',
-  keyLength: 32,
-  codeLength: 6,
-  window: 1,
-  encoding: 'base32'
-};
-
-// MFA验证流程
-@Post('enable-mfa')
-async enableMFA(@CurrentUser() user: User) {
-  const secret = authenticator.generateSecret();
-  const qrCode = authenticator.keyuri(user.email, 'Platform', secret);
-  // 返回二维码供用户扫描
-  return { qrCode, secret };
-}
-```
-
-## 性能优化
+## ⚡ 性能优化
 
 ### 数据库优化
 ```sql
@@ -1293,7 +1258,186 @@ async findUsers(query: FindUsersDto): Promise<PaginatedResult<User>> {
 }
 ```
 
-## 部署配置
+## 🛡️ 安全措施
+
+### 数据安全
+- **数据加密**: 敏感数据AES-256加密存储
+- **传输安全**: HTTPS强制，TLS 1.3协议
+- **数据脱敏**: 日志中隐藏敏感信息
+- **备份安全**: 加密备份，异地存储
+
+### 访问控制
+- **身份认证**: JWT令牌验证，支持令牌刷新
+- **权限控制**: 基于RBAC的细粒度权限管理
+- **API安全**: 请求频率限制，防止暴力攻击
+- **输入验证**: 严格的参数验证，防止注入攻击
+
+### 内部服务安全
+- **服务认证**: X-Service-Token内部服务认证
+- **网络隔离**: Docker网络隔离，最小权限原则
+- **密钥管理**: 环境变量管理敏感配置
+- **审计日志**: 完整的操作审计链路
+
+### 数据保护
+- **密码加密**: bcrypt with salt rounds 12
+- **敏感信息加密**: AES-256-GCM
+- **个人信息脱敏**: 日志中隐藏敏感信息
+- **SQL注入防护**: Prisma ORM参数化查询
+- **XSS防护**: 输入验证和输出编码
+
+### 接口安全
+- **JWT Token验证**: RS256签名算法
+- **请求频率限制**: 登录接口限制10次/分钟
+- **参数验证**: Class-validator严格验证
+- **CORS配置**: 限制跨域访问
+- **HTTPS强制**: 生产环境强制HTTPS
+
+### 多因素认证
+```typescript
+// TOTP配置
+const totpConfig = {
+  name: 'Platform',
+  keyLength: 32,
+  codeLength: 6,
+  window: 1,
+  encoding: 'base32'
+};
+
+// MFA验证流程
+@Post('enable-mfa')
+async enableMFA(@CurrentUser() user: User) {
+  const secret = authenticator.generateSecret();
+  const qrCode = authenticator.keyuri(user.email, 'Platform', secret);
+  // 返回二维码供用户扫描
+  return { qrCode, secret };
+}
+```
+
+### 数据库优化
+```sql
+-- 关键索引
+CREATE INDEX idx_users_email ON users.users(email);
+CREATE INDEX idx_users_tenant_id ON users.users(tenant_id);
+CREATE INDEX idx_users_status ON users.users(status);
+CREATE INDEX idx_users_created_at ON users.users(created_at DESC);
+CREATE INDEX idx_users_last_login ON users.users(last_login_at DESC);
+
+-- 复合索引
+CREATE INDEX idx_users_tenant_status ON users.users(tenant_id, status);
+CREATE INDEX idx_users_search ON users.users USING gin(to_tsvector('simple', first_name || ' ' || last_name || ' ' || email));
+
+-- 登录日志索引
+CREATE INDEX idx_login_logs_user_time ON users.user_login_logs(user_id, created_at DESC);
+CREATE INDEX idx_login_logs_ip ON users.user_login_logs(ip_address, created_at DESC);
+```
+
+### 查询优化
+```typescript
+// 分页查询优化
+async findUsers(query: FindUsersDto): Promise<PaginatedResult<User>> {
+  const { page = 1, limit = 20, search, status, tenantId } = query;
+  
+  const where: Prisma.UserWhereInput = {
+    tenantId,
+    ...(status && { status }),
+    ...(search && {
+      OR: [
+        { email: { contains: search, mode: 'insensitive' } },
+        { firstName: { contains: search, mode: 'insensitive' } },
+        { lastName: { contains: search, mode: 'insensitive' } }
+      ]
+    })
+  };
+
+  const [users, total] = await Promise.all([
+    this.prisma.user.findMany({
+      where,
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        email: true,
+        firstName: true,
+        lastName: true,
+        status: true,
+        lastLoginAt: true,
+        createdAt: true
+      }
+    }),
+    this.prisma.user.count({ where })
+  ]);
+
+  return {
+    data: users,
+    pagination: {
+      page,
+      limit,
+      total,
+      pages: Math.ceil(total / limit)
+    }
+  };
+}
+```
+
+## 📈 监控和告警
+
+### Prometheus指标收集
+```typescript
+// 用户管理服务核心指标
+const userMetrics = {
+  // 业务指标
+  'user_operations_total': Counter,
+  'user_operation_duration_seconds': Histogram,
+  'user_errors_total': Counter,
+
+  // 系统指标
+  'user_memory_usage_bytes': Gauge,
+  'user_cpu_usage_percent': Gauge,
+  'user_active_connections': Gauge
+}
+```
+
+### 告警规则
+```yaml
+groups:
+  - name: user-management-alerts
+    rules:
+      - alert: UserServiceHighErrorRate
+        expr: rate(user_errors_total[5m]) / rate(user_operations_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "用户管理服务错误率过高"
+```
+
+### 健康检查
+```typescript
+@Controller('health')
+export class HealthController {
+  @Get()
+  async checkHealth(): Promise<HealthStatus> {
+    const checks = await Promise.allSettled([
+      this.checkDatabase(),
+      this.checkRedis(),
+      this.checkDependencies()
+    ]);
+
+    return {
+      status: checks.every(c => c.status === 'fulfilled') ? 'healthy' : 'unhealthy',
+      service: 'user-management-service',
+      dependencies: {
+        database: checks[0].status === 'fulfilled',
+        redis: checks[1].status === 'fulfilled',
+        services: checks[2].status === 'fulfilled'
+      }
+    };
+  }
+}
+```
+
+## 🐳 部署配置
 
 ### Docker配置
 ```dockerfile
@@ -1437,7 +1581,42 @@ UPLOAD_STORAGE=local
 UPLOAD_PATH=/app/uploads
 ```
 
-## 监控和告警
+## 🧪 测试策略
+
+### 单元测试
+```typescript
+describe('UserService', () => {
+  it('should perform core operation successfully', async () => {
+    const result = await service.createUser(testData);
+    expect(result).toBeDefined();
+    expect(result.status).toBe('success');
+  });
+
+  it('should handle errors gracefully', async () => {
+    await expect(service.createUser(invalidData))
+      .rejects.toThrow('Expected error message');
+  });
+});
+```
+
+### 集成测试
+```typescript
+describe('UserManagement E2E', () => {
+  it('should integrate with dependent services', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/users')
+      .send(testPayload)
+      .expect(201);
+
+    expect(response.body).toHaveProperty('data');
+  });
+});
+```
+
+### 性能测试
+- 负载测试: 支持并发请求验证
+- 压力测试: 极限条件下的稳定性测试
+- 容量测试: 最大处理能力验证
 
 ### 健康检查
 ```typescript
@@ -1502,7 +1681,17 @@ export class MetricsService {
 }
 ```
 
-## 测试策略
+### 单元测试覆盖
+- 用户CRUD操作测试
+- 密码加密验证测试
+- 状态管理逻辑测试
+- 缓存机制测试
+
+### 集成测试覆盖
+- 与认证服务集成测试
+- 与权限服务集成测试
+- 数据库事务测试
+- API端点完整性测试
 
 ### 单元测试
 ```typescript
@@ -1590,7 +1779,28 @@ describe('UserController (e2e)', () => {
 });
 ```
 
-## 部署清单与监控
+### 测试数据管理
+```typescript
+// 测试数据种子
+const testUsers = [
+  {
+    email: 'admin@test.com',
+    firstName: '管理员',
+    lastName: '测试',
+    status: 'active',
+    roles: ['admin']
+  },
+  {
+    email: 'user@test.com', 
+    firstName: '普通',
+    lastName: '用户',
+    status: 'active',
+    roles: ['user']
+  }
+];
+```
+
+## ✅ 开发完成情况总结
 
 ### 标准版本生产环境配置
 - **内存需求**: 512MB（高负载服务级别）
