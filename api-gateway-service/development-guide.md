@@ -46,7 +46,7 @@ API网关服务是微服务平台的统一入口（端口3000），面向**100�
 - **压缩**: GZIP (标准压缩，避免Brotli等复杂算法)
 - **服务发现**: Docker Compose网络 (替代Consul/Eureka)
 - **负载均衡**: 内置算法 (Round Robin/Weighted, 替代Nginx Plus)
-- **消息队列**: Redis Streams (替代Kafka)
+- **消息队列**: Redis Streams (标准版本选择)
 
 ### 监控技术
 - **日志**: Winston

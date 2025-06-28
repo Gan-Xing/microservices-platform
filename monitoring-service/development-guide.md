@@ -22,11 +22,11 @@
 - **框架**: NestJS 10.x + TypeScript 5.x (统一技术栈)
 - **服务发现**: Docker Compose (避免Consul复杂性)
 
-### 企业版本保留 ⭐ (未来扩展)
-- **InfluxDB**: 企业版时序数据库
-- **Elasticsearch**: 企业版日志分析
-- **Jaeger**: 企业版分布式链路追踪
-- **Kubernetes**: 企业版容器编排
+### 企业版本扩展计划 ⭐ (V2.0版本)
+- **时序数据库**: 企业版可选InfluxDB
+- **高级日志分析**: 企业版可选Elasticsearch
+- **分布式链路追踪**: 企业版可选Jaeger
+- **容器编排**: 企业版可选Kubernetes
 
 ### 移除过度复杂组件 ❌
 - **InfluxDB** → PostgreSQL时序扩展
