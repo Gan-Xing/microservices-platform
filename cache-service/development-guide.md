@@ -15,75 +15,6 @@
 - **可用性**: 99%可用性，单实例Redis
 - **部署方式**: Docker Compose + Redis单实例，无需Kubernetes
 
-## 📅 项目规划
-
-### 开发里程碑
-- **Week 1**: 缓存服务开发（复杂度⭐⭐）
-- **优先级**: 高（基础服务，无依赖，被所有服务依赖）
-- **估算工期**: 2-3个工作日
-- **端口**: 3011
-- **内存分配**: 256MB (标准版本)
-
-### 开发顺序 (基于最少依赖原则)
-1. **Day 1**: 核心缓存操作 + Redis集成 + 内部API接口
-2. **Day 2**: 性能优化 + 监控统计 + PostgreSQL元数据存储  
-3. **Day 3**: 健康检查 + Docker部署 + 与其他服务集成测试
-
-### 服务集成计划
-- **Phase 1**: 建立基础缓存能力，为所有服务提供缓存支持
-- **Phase 2**: 集成认证和权限服务，实现权限缓存
-- **Phase 3**: 集成监控服务，实现全面监控
-
-### 技术风险评估
-- **单点故障风险**: Redis单实例故障影响所有服务
-- **内存管理风险**: 256MB内存限制下的LRU策略调优
-- **性能瓶颈风险**: 高并发访问下的Redis连接数限制
-- **服务依赖风险**: 作为基础服务，需要保证高可用性
-
-### 依赖关系
-- **前置依赖**: 无（基础服务，最先开发）
-- **并行开发**: 可与用户管理服务同步开发
-- **被依赖服务**: API网关(3000)、认证服务(3001)、权限服务(3002)、用户服务(3003)等
-- **核心依赖**: Redis 7+ + PostgreSQL 15+
-
-### 标准版本服务配置
-```typescript
-// config/cache.config.ts (标准版本)
-export default {
-  // 服务配置
-  service: {
-    name: 'cache-service',
-    port: 3011,
-    version: '1.0.0',
-    memoryLimit: '256MB'
-  },
-  
-  // Redis配置 (标准版本)
-  redis: {
-    url: 'redis://redis:6379',
-    maxMemory: '512MB',
-    evictionPolicy: 'allkeys-lru',
-    persistence: true,
-    cluster: false // 标准版本使用单实例
-  },
-  
-  // 缓存策略 (标准版本)
-  strategies: {
-    defaultTtl: 3600,
-    maxKeys: 100000,
-    compressionEnabled: true,
-    monitoringEnabled: true
-  },
-  
-  // 服务间通信
-  services: {
-    auth_service: 'http://auth-service:3001',
-    rbac_service: 'http://rbac-service:3002',
-    monitoring_service: 'http://monitoring-service:3007',
-    internal_token: process.env.INTERNAL_SERVICE_TOKEN
-  }
-};
-```
 
 ## 🛠️ 技术栈
 
@@ -724,6 +655,71 @@ export class DataPreloadService {
 }
 ```
 
+### Redis单实例配置
+```conf
+# redis.conf - 标准版本优化
+maxmemory 512mb
+maxmemory-policy allkeys-lru
+save 900 1
+save 300 10
+save 60 10000
+
+# 网络优化
+tcp-keepalive 300
+timeout 0
+tcp-backlog 511
+
+# 性能优化
+hash-max-ziplist-entries 512
+hash-max-ziplist-value 64
+list-max-ziplist-size -2
+set-max-intset-entries 512
+zset-max-ziplist-entries 128
+zset-max-ziplist-value 64
+
+# 单实例配置
+appendonly yes
+appendfsync everysec
+```
+
+### 缓存策略配置
+```typescript
+// 缓存策略配置
+export const CACHE_STRATEGIES = {
+  // 用户会话缓存 (15分钟)
+  userSessions: {
+    ttl: 900,
+    keyPattern: 'session:{sessionId}',
+    evictionPolicy: 'lru',
+    maxSize: 10000 // 支持1万并发会话
+  },
+  
+  // 用户数据缓存 (1小时)
+  userData: {
+    ttl: 3600,
+    keyPattern: 'user:{userId}:data',
+    evictionPolicy: 'lru',
+    maxSize: 5000 // 支持5000用户数据缓存
+  },
+  
+  // API响应缓存 (5分钟)
+  apiResponses: {
+    ttl: 300,
+    keyPattern: 'api:{endpoint}:{params}',
+    evictionPolicy: 'lfu',
+    maxSize: 20000 // 高频API缓存
+  },
+  
+  // 配置数据缓存 (30分钟)
+  configData: {
+    ttl: 1800,
+    keyPattern: 'config:{tenantId}:{key}',
+    evictionPolicy: 'lru',
+    maxSize: 1000 // 租户配置缓存
+  }
+};
+```
+
 ## 🛡️ 安全措施
 
 ### 数据安全
@@ -920,72 +916,6 @@ volumes:
     driver: local
 ```
 
-## ⚙️ 性能优化配置
-
-### Redis单实例配置
-```conf
-# redis.conf - 标准版本优化
-maxmemory 512mb
-maxmemory-policy allkeys-lru
-save 900 1
-save 300 10
-save 60 10000
-
-# 网络优化
-tcp-keepalive 300
-timeout 0
-tcp-backlog 511
-
-# 性能优化
-hash-max-ziplist-entries 512
-hash-max-ziplist-value 64
-list-max-ziplist-size -2
-set-max-intset-entries 512
-zset-max-ziplist-entries 128
-zset-max-ziplist-value 64
-
-# 单实例配置
-appendonly yes
-appendfsync everysec
-```
-
-### 缓存策略配置
-```typescript
-// 缓存策略配置
-export const CACHE_STRATEGIES = {
-  // 用户会话缓存 (15分钟)
-  userSessions: {
-    ttl: 900,
-    keyPattern: 'session:{sessionId}',
-    evictionPolicy: 'lru',
-    maxSize: 10000 // 支持1万并发会话
-  },
-  
-  // 用户数据缓存 (1小时)
-  userData: {
-    ttl: 3600,
-    keyPattern: 'user:{userId}:data',
-    evictionPolicy: 'lru',
-    maxSize: 5000 // 支持5000用户数据缓存
-  },
-  
-  // API响应缓存 (5分钟)
-  apiResponses: {
-    ttl: 300,
-    keyPattern: 'api:{endpoint}:{params}',
-    evictionPolicy: 'lfu',
-    maxSize: 20000 // 高频API缓存
-  },
-  
-  // 配置数据缓存 (30分钟)
-  configData: {
-    ttl: 1800,
-    keyPattern: 'config:{tenantId}:{key}',
-    evictionPolicy: 'lru',
-    maxSize: 1000 // 租户配置缓存
-  }
-};
-```
 
 ## 🧪 测试策略
 
@@ -1350,6 +1280,37 @@ describe('Cache Fault Tolerance Tests', () => {
 - **API端点覆盖率**: 100%
 - **关键路径覆盖率**: 100%
 - **性能测试**: 响应时间 < 5ms，吞吐量 > 2000 QPS
+
+## 📅 项目规划
+
+### 开发周期
+**Week 1** (标准版本4周计划)
+- **优先级**: 高（基础服务，无依赖，被所有服务依赖）
+- **估算工期**: 2-3个工作日
+- **端口**: 3011
+- **内存分配**: 256MB (标准版本)
+
+### 里程碑设置
+1. **Day 1**: 核心缓存操作 + Redis集成 + 内部API接口
+2. **Day 2**: 性能优化 + 监控统计 + PostgreSQL元数据存储  
+3. **Day 3**: 健康检查 + Docker部署 + 与其他服务集成测试
+
+### 服务集成计划
+- **Phase 1**: 建立基础缓存能力，为所有服务提供缓存支持
+- **Phase 2**: 集成认证和权限服务，实现权限缓存
+- **Phase 3**: 集成监控服务，实现全面监控
+
+### 风险评估
+- **单点故障风险**: Redis单实例故障影响所有服务
+- **内存管理风险**: 256MB内存限制下的LRU策略调优
+- **性能瓶颈风险**: 高并发访问下的Redis连接数限制
+- **服务依赖风险**: 作为基础服务，需要保证高可用性
+
+### 依赖关系
+- **前置依赖**: 无（基础服务，最先开发）
+- **并行开发**: 可与用户管理服务同步开发
+- **被依赖服务**: API网关(3000)、认证服务(3001)、权限服务(3002)、用户服务(3003)等
+- **核心依赖**: Redis 7+ + PostgreSQL 15+
 
 ## 📈 监控和告警
 
