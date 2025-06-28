@@ -1,6 +1,6 @@
 # 缓存服务开发文档 - 标准版本
 
-## 服务概述
+## 🎯 服务概述
 
 缓存服务是微服务平台的高性能数据加速核心，面向**100租户+10万用户**的企业级生产系统，负责分布式缓存管理、会话存储、数据预热和性能优化，为整个平台提供毫秒级数据访问能力和显著的性能提升。
 
@@ -46,112 +46,6 @@
 - **被依赖服务**: API网关(3000)、认证服务(3001)、权限服务(3002)、用户服务(3003)等
 - **核心依赖**: Redis 7+ + PostgreSQL 15+
 
-### 服务间交互设计
-
-#### 1. 提供给所有服务的缓存接口
-```typescript
-// 所有服务 → 缓存服务 (3011)
-// 设置缓存 (内部API)
-POST http://cache-service:3011/internal/cache/set
-Headers: X-Service-Token: {内部服务令牌}
-Body: {
-  "key": "user:12345:profile",
-  "value": { /* 用户数据 */ },
-  "ttl": 3600
-}
-
-// 获取缓存
-GET http://cache-service:3011/internal/cache/get/{key}
-Headers: X-Service-Token: {内部服务令牌}
-
-// 删除缓存
-DELETE http://cache-service:3011/internal/cache/delete/{key}
-Headers: X-Service-Token: {内部服务令牌}
-```
-
-#### 2. 与认证服务的交互
-```typescript
-// 缓存服务 → 认证服务 (3001)
-// 缓存用户会话
-POST http://cache-service:3011/internal/cache/session
-Headers: X-Service-Token: {内部服务令牌}
-Body: {
-  "sessionId": "sess_12345",
-  "userId": "user_12345",
-  "tenantId": "tenant_123",
-  "ttl": 900
-}
-
-// 验证会话缓存
-GET http://cache-service:3011/internal/cache/session/{sessionId}
-Headers: X-Service-Token: {内部服务令牌}
-```
-
-#### 3. 与权限服务的交互
-```typescript
-// 缓存服务 → 权限管理服务 (3002)
-// 缓存权限检查结果
-POST http://cache-service:3011/internal/cache/permission
-Headers: X-Service-Token: {内部服务令牌}
-Body: {
-  "key": "permission:user_123:tenant_456:resource:action",
-  "result": {
-    "allowed": true,
-    "roles": ["admin"],
-    "permissions": ["user:read"]
-  },
-  "ttl": 300
-}
-```
-
-#### 4. 与监控服务的交互
-```typescript
-// 缓存服务 → 监控服务 (3007)
-// 报告缓存指标
-POST http://monitoring-service:3007/internal/metrics/cache
-Headers: X-Service-Token: {内部服务令牌}
-Body: {
-  "hitRate": 0.85,
-  "memoryUsage": 200,
-  "connectionCount": 50,
-  "operationsPerSecond": 1500
-}
-```
-
-#### 5. 服务间缓存策略设计
-```typescript
-// 统一缓存策略，供所有服务使用
-export const CACHE_STRATEGIES = {
-  // 用户会话缓存 (15分钟)
-  userSessions: {
-    keyPattern: 'session:{sessionId}',
-    ttl: 900,
-    evictionPolicy: 'lru'
-  },
-  
-  // 权限检查缓存 (5分钟)
-  permissions: {
-    keyPattern: 'permission:{userId}:{tenantId}:{resource}:{action}',
-    ttl: 300,
-    evictionPolicy: 'lru'
-  },
-  
-  // 用户数据缓存 (1小时)
-  userData: {
-    keyPattern: 'user:{userId}:data',
-    ttl: 3600,
-    evictionPolicy: 'lru'
-  },
-  
-  // API响应缓存 (5分钟)
-  apiResponses: {
-    keyPattern: 'api:{endpoint}:{params}',
-    ttl: 300,
-    evictionPolicy: 'lfu'
-  }
-};
-```
-
 ### 标准版本服务配置
 ```typescript
 // config/cache.config.ts (标准版本)
@@ -191,7 +85,7 @@ export default {
 };
 ```
 
-## 技术栈
+## 🛠️ 技术栈
 
 ### 后端技术
 - **框架**: NestJS 10.x + TypeScript 5.x
@@ -204,7 +98,7 @@ export default {
 - **Redis**: 键值存储缓存，LRU淘汰策略
 - **一致性**: Redis Lua脚本保证原子性
 
-## 完整功能列表
+## 📋 完整功能列表
 
 ### 核心功能 (生产必需)
 1. **缓存基础操作** - 数据存取、过期管理、批量操作、模式匹配
@@ -226,7 +120,7 @@ export default {
 13. **缓存分析** - 使用模式分析、性能瓶颈分析、优化建议
 14. **灾难恢复** - 数据备份、快速恢复、故障切换
 
-## API设计 (26个端点) - 标准版本完整功能
+## 🔗 API设计 (26个端点) - 标准版本完整功能
 
 ### 1. 缓存基础操作 (7个端点)
 ```typescript
@@ -279,7 +173,7 @@ GET    /api/v1/cache/ping                    // 连接性检查
 GET    /api/v1/cache/status                  // 服务状态
 ```
 
-## 数据库设计
+## 🗄️ 数据库设计
 
 ### 缓存配置表 (cache_configs)
 ```sql
@@ -445,7 +339,451 @@ CREATE TABLE cache_operation_logs (
 );
 ```
 
-## 标准版本部署配置
+## 🏗️ 核心架构实现
+
+### 缓存服务核心架构
+```typescript
+// 缓存服务主要组件
+@Module({
+  imports: [
+    RedisModule.forRoot({
+      type: 'single',
+      url: process.env.REDIS_URL
+    }),
+    DatabaseModule,
+    MonitoringModule,
+    HealthModule
+  ],
+  controllers: [
+    CacheController,
+    InternalCacheController,
+    HealthController
+  ],
+  providers: [
+    CacheService,
+    CacheStatisticsService,
+    HotKeyDetectionService,
+    CacheMetricsService
+  ]
+})
+export class CacheServiceModule {}
+```
+
+### 分布式缓存管理器
+```typescript
+@Injectable()
+export class DistributedCacheManager {
+  constructor(
+    private redis: Redis,
+    private statisticsService: CacheStatisticsService
+  ) {}
+
+  async get<T>(key: string): Promise<T | null> {
+    const startTime = Date.now();
+    try {
+      const value = await this.redis.get(key);
+      const responseTime = Date.now() - startTime;
+      
+      if (value) {
+        await this.statisticsService.recordHit(key, responseTime);
+        return this.deserialize(value);
+      } else {
+        await this.statisticsService.recordMiss(key, responseTime);
+        return null;
+      }
+    } catch (error) {
+      await this.statisticsService.recordError(key, error);
+      throw error;
+    }
+  }
+
+  async set<T>(key: string, value: T, ttl?: number): Promise<void> {
+    const startTime = Date.now();
+    try {
+      const serialized = this.serialize(value);
+      const compressed = await this.compress(serialized);
+      
+      if (ttl) {
+        await this.redis.setex(key, ttl, compressed);
+      } else {
+        await this.redis.set(key, compressed);
+      }
+      
+      const responseTime = Date.now() - startTime;
+      await this.statisticsService.recordSet(key, responseTime);
+    } catch (error) {
+      await this.statisticsService.recordError(key, error);
+      throw error;
+    }
+  }
+
+  async mget<T>(keys: string[]): Promise<(T | null)[]> {
+    const results = await this.redis.mget(...keys);
+    return results.map(result => result ? this.deserialize(result) : null);
+  }
+
+  async mset(keyValuePairs: Array<[string, any, number?]>): Promise<void> {
+    const pipeline = this.redis.pipeline();
+    
+    for (const [key, value, ttl] of keyValuePairs) {
+      const serialized = this.serialize(value);
+      const compressed = await this.compress(serialized);
+      
+      if (ttl) {
+        pipeline.setex(key, ttl, compressed);
+      } else {
+        pipeline.set(key, compressed);
+      }
+    }
+    
+    await pipeline.exec();
+  }
+}
+```
+
+### 会话缓存管理器
+```typescript
+@Injectable()
+export class SessionCacheManager {
+  private readonly SESSION_PREFIX = 'session:';
+  private readonly DEFAULT_TTL = 900; // 15分钟
+
+  constructor(private cacheManager: DistributedCacheManager) {}
+
+  async createSession(sessionData: SessionData): Promise<string> {
+    const sessionId = this.generateSessionId();
+    const key = this.getSessionKey(sessionId);
+    
+    await this.cacheManager.set(key, sessionData, this.DEFAULT_TTL);
+    return sessionId;
+  }
+
+  async getSession(sessionId: string): Promise<SessionData | null> {
+    const key = this.getSessionKey(sessionId);
+    return await this.cacheManager.get<SessionData>(key);
+  }
+
+  async updateSession(sessionId: string, data: Partial<SessionData>): Promise<void> {
+    const key = this.getSessionKey(sessionId);
+    const existing = await this.getSession(sessionId);
+    
+    if (existing) {
+      const updated = { ...existing, ...data, lastActivity: new Date() };
+      await this.cacheManager.set(key, updated, this.DEFAULT_TTL);
+    }
+  }
+
+  async deleteSession(sessionId: string): Promise<void> {
+    const key = this.getSessionKey(sessionId);
+    await this.cacheManager.delete(key);
+  }
+
+  private getSessionKey(sessionId: string): string {
+    return `${this.SESSION_PREFIX}${sessionId}`;
+  }
+
+  private generateSessionId(): string {
+    return `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+```
+
+### 权限缓存管理器
+```typescript
+@Injectable()
+export class PermissionCacheManager {
+  private readonly PERMISSION_PREFIX = 'permission:';
+  private readonly DEFAULT_TTL = 300; // 5分钟
+
+  constructor(private cacheManager: DistributedCacheManager) {}
+
+  async cachePermissionCheck(
+    userId: string,
+    tenantId: string,
+    resource: string,
+    action: string,
+    result: PermissionCheckResult
+  ): Promise<void> {
+    const key = this.getPermissionKey(userId, tenantId, resource, action);
+    await this.cacheManager.set(key, result, this.DEFAULT_TTL);
+  }
+
+  async getPermissionCheck(
+    userId: string,
+    tenantId: string,
+    resource: string,
+    action: string
+  ): Promise<PermissionCheckResult | null> {
+    const key = this.getPermissionKey(userId, tenantId, resource, action);
+    return await this.cacheManager.get<PermissionCheckResult>(key);
+  }
+
+  async invalidateUserPermissions(userId: string, tenantId: string): Promise<void> {
+    const pattern = this.getPermissionKey(userId, tenantId, '*', '*');
+    await this.cacheManager.deleteByPattern(pattern);
+  }
+
+  private getPermissionKey(
+    userId: string,
+    tenantId: string,
+    resource: string,
+    action: string
+  ): string {
+    return `${this.PERMISSION_PREFIX}${userId}:${tenantId}:${resource}:${action}`;
+  }
+}
+```
+
+## 🔄 服务间交互设计
+
+### 内部API设计原则
+- **认证方式**: X-Service-Token内部服务令牌
+- **数据格式**: JSON
+- **错误处理**: 统一错误码和消息格式
+- **性能要求**: 内部API响应时间 < 5ms
+- **容错机制**: 缓存失败不应影响业务操作
+
+### 1. 提供给所有服务的缓存接口
+```typescript
+// 所有服务 → 缓存服务 (3011)
+// 设置缓存 (内部API)
+POST http://cache-service:3011/internal/cache/set
+Headers: X-Service-Token: {内部服务令牌}
+Body: {
+  "key": "user:12345:profile",
+  "value": { /* 用户数据 */ },
+  "ttl": 3600
+}
+
+// 获取缓存
+GET http://cache-service:3011/internal/cache/get/{key}
+Headers: X-Service-Token: {内部服务令牌}
+
+// 删除缓存
+DELETE http://cache-service:3011/internal/cache/delete/{key}
+Headers: X-Service-Token: {内部服务令牌}
+
+// 批量操作
+POST http://cache-service:3011/internal/cache/mget
+POST http://cache-service:3011/internal/cache/mset
+POST http://cache-service:3011/internal/cache/exists
+POST http://cache-service:3011/internal/cache/expire
+```
+
+### 2. 与认证服务的交互
+```typescript
+// 缓存服务 → 认证服务 (3001)
+// 缓存用户会话
+POST http://cache-service:3011/internal/cache/session
+Headers: X-Service-Token: {内部服务令牌}
+Body: {
+  "sessionId": "sess_12345",
+  "userId": "user_12345",
+  "tenantId": "tenant_123",
+  "ttl": 900
+}
+
+// 验证会话缓存
+GET http://cache-service:3011/internal/cache/session/{sessionId}
+Headers: X-Service-Token: {内部服务令牌}
+```
+
+### 3. 与权限服务的交互
+```typescript
+// 缓存服务 → 权限管理服务 (3002)
+// 缓存权限检查结果
+POST http://cache-service:3011/internal/cache/permission
+Headers: X-Service-Token: {内部服务令牌}
+Body: {
+  "key": "permission:user_123:tenant_456:resource:action",
+  "result": {
+    "allowed": true,
+    "roles": ["admin"],
+    "permissions": ["user:read"]
+  },
+  "ttl": 300
+}
+```
+
+### 4. 与监控服务的交互
+```typescript
+// 缓存服务 → 监控服务 (3007)
+// 报告缓存指标
+POST http://monitoring-service:3007/internal/metrics/cache
+Headers: X-Service-Token: {内部服务令牌}
+Body: {
+  "hitRate": 0.85,
+  "memoryUsage": 200,
+  "connectionCount": 50,
+  "operationsPerSecond": 1500
+}
+```
+
+### 5. 服务间缓存策略设计
+```typescript
+// 统一缓存策略，供所有服务使用
+export const CACHE_STRATEGIES = {
+  // 用户会话缓存 (15分钟)
+  userSessions: {
+    keyPattern: 'session:{sessionId}',
+    ttl: 900,
+    evictionPolicy: 'lru'
+  },
+  
+  // 权限检查缓存 (5分钟)
+  permissions: {
+    keyPattern: 'permission:{userId}:{tenantId}:{resource}:{action}',
+    ttl: 300,
+    evictionPolicy: 'lru'
+  },
+  
+  // 用户数据缓存 (1小时)
+  userData: {
+    keyPattern: 'user:{userId}:data',
+    ttl: 3600,
+    evictionPolicy: 'lru'
+  },
+  
+  // API响应缓存 (5分钟)
+  apiResponses: {
+    keyPattern: 'api:{endpoint}:{params}',
+    ttl: 300,
+    evictionPolicy: 'lfu'
+  }
+};
+```
+
+## ⚡ 性能优化
+
+### Redis性能优化
+```typescript
+// Redis连接池优化
+const redisConfig = {
+  host: 'redis',
+  port: 6379,
+  lazyConnect: true,
+  maxRetriesPerRequest: 3,
+  retryDelayOnFailover: 100,
+  keepAlive: 30000,
+  
+  // 连接池配置
+  family: 4,
+  connectTimeout: 10000,
+  commandTimeout: 5000,
+  
+  // 性能优化
+  enableReadyCheck: false,
+  maxLoadingTimeout: 3000
+};
+```
+
+### 缓存压缩优化
+```typescript
+@Injectable()
+export class CacheCompressionService {
+  async compress(data: string): Promise<string> {
+    if (data.length < 1024) return data; // 小数据不压缩
+    
+    const compressed = await gzip(data);
+    return `gzip:${compressed.toString('base64')}`;
+  }
+
+  async decompress(data: string): Promise<string> {
+    if (!data.startsWith('gzip:')) return data;
+    
+    const base64Data = data.slice(5);
+    const buffer = Buffer.from(base64Data, 'base64');
+    return (await gunzip(buffer)).toString();
+  }
+}
+```
+
+### 热点数据预加载
+```typescript
+@Injectable()
+export class DataPreloadService {
+  async preloadHotData(): Promise<void> {
+    const hotKeys = await this.getHotKeys();
+    
+    for (const key of hotKeys) {
+      if (!await this.cacheManager.exists(key)) {
+        const data = await this.fetchFromDatabase(key);
+        await this.cacheManager.set(key, data, 3600);
+      }
+    }
+  }
+
+  private async getHotKeys(): Promise<string[]> {
+    // 从统计表中获取热点键
+    return this.hotKeyRepository.find({
+      where: { shouldPreload: true },
+      order: { preloadPriority: 'DESC' },
+      take: 1000
+    }).then(keys => keys.map(k => k.keyPattern));
+  }
+}
+```
+
+## 🛡️ 安全措施
+
+### 数据安全
+- **传输安全**: Redis连接使用TLS加密
+- **数据加密**: 敏感数据在缓存前进行AES-256加密
+- **访问控制**: Redis AUTH密码认证
+- **网络隔离**: Docker网络隔离，仅内部访问
+
+### 访问控制
+- **服务认证**: X-Service-Token内部服务认证
+- **权限验证**: 与RBAC服务集成的权限检查
+- **API安全**: 请求频率限制和超时控制
+- **输入验证**: 严格的键名和数据格式验证
+
+### 缓存安全
+```typescript
+@Injectable()
+export class CacheSecurityService {
+  private readonly SENSITIVE_PATTERNS = [
+    /password/i,
+    /secret/i,
+    /token/i,
+    /key/i
+  ];
+
+  async encryptSensitiveData(key: string, data: any): Promise<any> {
+    if (this.isSensitiveData(key)) {
+      return this.encrypt(JSON.stringify(data));
+    }
+    return data;
+  }
+
+  async decryptSensitiveData(key: string, data: any): Promise<any> {
+    if (this.isSensitiveData(key) && typeof data === 'string') {
+      try {
+        return JSON.parse(this.decrypt(data));
+      } catch {
+        return data; // 如果解密失败，返回原数据
+      }
+    }
+    return data;
+  }
+
+  private isSensitiveData(key: string): boolean {
+    return this.SENSITIVE_PATTERNS.some(pattern => pattern.test(key));
+  }
+
+  private encrypt(data: string): string {
+    const cipher = crypto.createCipher('aes-256-cbc', process.env.CACHE_ENCRYPTION_KEY);
+    return cipher.update(data, 'utf8', 'hex') + cipher.final('hex');
+  }
+
+  private decrypt(encryptedData: string): string {
+    const decipher = crypto.createDecipher('aes-256-cbc', process.env.CACHE_ENCRYPTION_KEY);
+    return decipher.update(encryptedData, 'hex', 'utf8') + decipher.final('utf8');
+  }
+}
+```
+
+## 🐳 部署配置
 
 ### Docker Compose配置（标准版本优化）
 ```yaml
@@ -582,7 +920,7 @@ volumes:
     driver: local
 ```
 
-## 性能优化配置
+## ⚙️ 性能优化配置
 
 ### Redis单实例配置
 ```conf
@@ -649,7 +987,371 @@ export const CACHE_STRATEGIES = {
 };
 ```
 
-## 监控和告警
+## 🧪 测试策略
+
+### 单元测试
+```typescript
+describe('CacheService', () => {
+  let service: CacheService;
+  let redisClient: MockRedis;
+
+  beforeEach(async () => {
+    const module = await Test.createTestingModule({
+      providers: [
+        CacheService,
+        {
+          provide: 'REDIS_CLIENT',
+          useClass: MockRedis,
+        },
+      ],
+    }).compile();
+
+    service = module.get<CacheService>(CacheService);
+    redisClient = module.get('REDIS_CLIENT');
+  });
+
+  it('should set and get cache value successfully', async () => {
+    const key = 'test:key';
+    const value = { data: 'test-value' };
+    const ttl = 3600;
+
+    await service.set(key, value, ttl);
+    const result = await service.get(key);
+
+    expect(result).toEqual(value);
+    expect(redisClient.setex).toHaveBeenCalledWith(key, ttl, JSON.stringify(value));
+  });
+
+  it('should handle cache miss gracefully', async () => {
+    const key = 'nonexistent:key';
+    redisClient.get.mockResolvedValue(null);
+
+    const result = await service.get(key);
+
+    expect(result).toBeNull();
+  });
+
+  it('should delete cache key successfully', async () => {
+    const key = 'test:key';
+
+    await service.delete(key);
+
+    expect(redisClient.del).toHaveBeenCalledWith(key);
+  });
+
+  it('should handle batch operations correctly', async () => {
+    const keys = ['key1', 'key2', 'key3'];
+    const values = ['value1', 'value2', 'value3'];
+    
+    redisClient.mget.mockResolvedValue(values);
+
+    const results = await service.mget(keys);
+
+    expect(results).toEqual(values);
+    expect(redisClient.mget).toHaveBeenCalledWith(...keys);
+  });
+});
+```
+
+### 集成测试
+```typescript
+describe('Cache Service E2E', () => {
+  let app: INestApplication;
+  let cacheService: CacheService;
+  let redis: Redis;
+
+  beforeAll(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [CacheServiceModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    cacheService = moduleFixture.get<CacheService>(CacheService);
+    redis = moduleFixture.get('REDIS_CLIENT');
+    await app.init();
+  });
+
+  it('should integrate with Redis successfully', async () => {
+    const key = 'integration:test:key';
+    const value = { integration: true, timestamp: Date.now() };
+
+    await cacheService.set(key, value, 300);
+    const result = await cacheService.get(key);
+
+    expect(result).toEqual(value);
+
+    // 清理测试数据
+    await cacheService.delete(key);
+  });
+
+  it('should handle session cache operations', async () => {
+    const sessionData = {
+      userId: 'user-123',
+      tenantId: 'tenant-456',
+      roles: ['user'],
+      lastActivity: new Date()
+    };
+
+    const response = await request(app.getHttpServer())
+      .post('/internal/cache/session')
+      .set('X-Service-Token', process.env.INTERNAL_SERVICE_TOKEN)
+      .send(sessionData)
+      .expect(201);
+
+    expect(response.body).toHaveProperty('sessionId');
+
+    const sessionId = response.body.sessionId;
+    const getResponse = await request(app.getHttpServer())
+      .get(`/internal/cache/session/${sessionId}`)
+      .set('X-Service-Token', process.env.INTERNAL_SERVICE_TOKEN)
+      .expect(200);
+
+    expect(getResponse.body.userId).toBe(sessionData.userId);
+  });
+
+  it('should enforce service authentication', async () => {
+    await request(app.getHttpServer())
+      .post('/internal/cache/set')
+      .send({ key: 'test', value: 'test' })
+      .expect(401); // 未认证的请求应该被拒绝
+  });
+});
+```
+
+### 性能测试
+```typescript
+describe('Cache Performance Tests', () => {
+  let cacheService: CacheService;
+
+  beforeEach(async () => {
+    // 使用真实Redis进行性能测试
+    cacheService = new CacheService(realRedisClient);
+  });
+
+  it('should handle high concurrency get operations', async () => {
+    const concurrentRequests = 1000;
+    const key = 'performance:test:key';
+    const value = { data: 'performance-test-data' };
+
+    // 预设缓存数据
+    await cacheService.set(key, value, 3600);
+
+    const promises = Array.from({ length: concurrentRequests }, () =>
+      cacheService.get(key)
+    );
+
+    const startTime = Date.now();
+    const results = await Promise.all(promises);
+    const endTime = Date.now();
+
+    const avgResponseTime = (endTime - startTime) / concurrentRequests;
+    
+    expect(results).toHaveLength(concurrentRequests);
+    expect(results.every(result => result?.data === value.data)).toBe(true);
+    expect(avgResponseTime).toBeLessThan(5); // 平均响应时间应小于5ms
+  });
+
+  it('should handle batch operations efficiently', async () => {
+    const batchSize = 1000;
+    const keyValuePairs = Array.from({ length: batchSize }, (_, i) => [
+      `batch:key:${i}`,
+      { data: `value-${i}` },
+      3600
+    ]);
+
+    const startTime = Date.now();
+    await cacheService.mset(keyValuePairs);
+    const endTime = Date.now();
+
+    const totalTime = endTime - startTime;
+    const timePerOperation = totalTime / batchSize;
+
+    expect(timePerOperation).toBeLessThan(1); // 每个操作应小于1ms
+
+    // 验证数据正确性
+    const keys = keyValuePairs.map(([key]) => key);
+    const results = await cacheService.mget(keys);
+    expect(results).toHaveLength(batchSize);
+  });
+
+  it('should maintain performance under memory pressure', async () => {
+    // 填满缓存直到内存限制
+    const largeValue = 'x'.repeat(1024); // 1KB数据
+    const keyCount = 10000; // 10MB数据
+
+    for (let i = 0; i < keyCount; i++) {
+      await cacheService.set(`memory:test:${i}`, largeValue, 3600);
+    }
+
+    // 测试在内存压力下的性能
+    const startTime = Date.now();
+    await cacheService.get('memory:test:0');
+    const endTime = Date.now();
+
+    expect(endTime - startTime).toBeLessThan(10); // 应该仍然小于10ms
+  });
+});
+```
+
+### 负载测试
+```bash
+# 使用artillery进行负载测试
+# cache-load-test.yml
+config:
+  target: 'http://localhost:3011'
+  phases:
+    - duration: 60
+      arrivalRate: 100  # 每秒100个请求
+    - duration: 120
+      arrivalRate: 200  # 每秒200个请求
+
+scenarios:
+  - name: "Cache operations"
+    weight: 70
+    flow:
+      - post:
+          url: "/internal/cache/set"
+          headers:
+            X-Service-Token: "{{ $processEnvironment.INTERNAL_SERVICE_TOKEN }}"
+          json:
+            key: "load:test:{{ $randomString() }}"
+            value: "{{ $randomString() }}"
+            ttl: 300
+
+  - name: "Cache retrieval"
+    weight: 30
+    flow:
+      - get:
+          url: "/internal/cache/get/load:test:fixed-key"
+          headers:
+            X-Service-Token: "{{ $processEnvironment.INTERNAL_SERVICE_TOKEN }}"
+```
+
+### 安全测试
+```typescript
+describe('Cache Security Tests', () => {
+  let app: INestApplication;
+
+  beforeAll(async () => {
+    const moduleFixture = await Test.createTestingModule({
+      imports: [CacheServiceModule],
+    }).compile();
+
+    app = moduleFixture.createNestApplication();
+    await app.init();
+  });
+
+  it('should reject requests without service token', async () => {
+    await request(app.getHttpServer())
+      .post('/internal/cache/set')
+      .send({ key: 'test', value: 'test' })
+      .expect(401);
+  });
+
+  it('should reject requests with invalid service token', async () => {
+    await request(app.getHttpServer())
+      .post('/internal/cache/set')
+      .set('X-Service-Token', 'invalid-token')
+      .send({ key: 'test', value: 'test' })
+      .expect(401);
+  });
+
+  it('should sanitize malicious cache keys', async () => {
+    const maliciousKey = '../../../etc/passwd';
+    const sanitizedKey = 'etc_passwd'; // 预期的清理结果
+
+    await request(app.getHttpServer())
+      .post('/internal/cache/set')
+      .set('X-Service-Token', process.env.INTERNAL_SERVICE_TOKEN)
+      .send({ key: maliciousKey, value: 'test', ttl: 300 })
+      .expect(201);
+
+    // 验证键名已被清理
+    const response = await request(app.getHttpServer())
+      .get(`/internal/cache/get/${sanitizedKey}`)
+      .set('X-Service-Token', process.env.INTERNAL_SERVICE_TOKEN)
+      .expect(200);
+
+    expect(response.body.value).toBe('test');
+  });
+
+  it('should encrypt sensitive data automatically', async () => {
+    const sensitiveKey = 'user:password:123';
+    const sensitiveValue = { password: 'secret123' };
+
+    await request(app.getHttpServer())
+      .post('/internal/cache/set')
+      .set('X-Service-Token', process.env.INTERNAL_SERVICE_TOKEN)
+      .send({ key: sensitiveKey, value: sensitiveValue, ttl: 300 })
+      .expect(201);
+
+    // 直接从Redis检查数据是否被加密
+    const redisValue = await redis.get(sensitiveKey);
+    expect(redisValue).not.toContain('secret123'); // 不应包含明文密码
+  });
+});
+```
+
+### 容错测试
+```typescript
+describe('Cache Fault Tolerance Tests', () => {
+  let cacheService: CacheService;
+  let mockRedis: MockRedis;
+
+  beforeEach(() => {
+    mockRedis = new MockRedis();
+    cacheService = new CacheService(mockRedis);
+  });
+
+  it('should handle Redis connection failures gracefully', async () => {
+    mockRedis.get.mockRejectedValue(new Error('Connection lost'));
+
+    const result = await cacheService.get('test:key');
+
+    expect(result).toBeNull(); // 应该返回null而不是抛出异常
+  });
+
+  it('should retry failed operations', async () => {
+    let callCount = 0;
+    mockRedis.set.mockImplementation(() => {
+      callCount++;
+      if (callCount < 3) {
+        throw new Error('Temporary failure');
+      }
+      return Promise.resolve();
+    });
+
+    await cacheService.set('retry:test', 'value', 300);
+
+    expect(callCount).toBe(3); // 应该重试了3次
+  });
+
+  it('should implement circuit breaker pattern', async () => {
+    // 模拟连续失败
+    for (let i = 0; i < 10; i++) {
+      mockRedis.get.mockRejectedValueOnce(new Error('Service unavailable'));
+      await cacheService.get(`failure:${i}`);
+    }
+
+    // 断路器应该打开，后续请求直接返回失败
+    const startTime = Date.now();
+    const result = await cacheService.get('test:after:circuit:open');
+    const endTime = Date.now();
+
+    expect(result).toBeNull();
+    expect(endTime - startTime).toBeLessThan(10); // 应该立即返回，不等待Redis响应
+  });
+});
+```
+
+### 测试覆盖率要求
+- **单元测试覆盖率**: ≥ 85%
+- **集成测试覆盖率**: ≥ 75%
+- **API端点覆盖率**: 100%
+- **关键路径覆盖率**: 100%
+- **性能测试**: 响应时间 < 5ms，吞吐量 > 2000 QPS
+
+## 📈 监控和告警
 
 ### 关键指标监控
 ```typescript
@@ -692,7 +1394,7 @@ cache_alerts:
     severity: "warning"
 ```
 
-## 生产部署指南
+## 🚀 生产部署指南
 
 ### 1. 环境要求
 - **CPU**: 0.25 Core (生产环境)
@@ -721,9 +1423,7 @@ cache_alerts:
 - [ ] 部署网络配置和服务发现（platform-network）
 - [ ] 配置统一错误处理和重试机制
 
-## 内部API端点（微服务间通信）
-
-### 为其他服务提供的缓存API
+### 为其他服务提供的内部API端点
 ```typescript
 // 基础缓存操作 - 所有服务调用
 GET    /internal/cache/get/{key}
@@ -791,7 +1491,7 @@ const retryConfig = {
 };
 ```
 
-## 开发完成情况总结
+## ✅ 开发完成情况总结
 
 ### 三个开发阶段完成情况
 
