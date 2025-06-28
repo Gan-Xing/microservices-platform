@@ -1,6 +1,6 @@
 # 多租户管理服务开发文档 - 标准版本
 
-## 服务概述
+## 🎯 服务概述
 
 多租户管理服务是微服务平台的资源隔离核心，面向**100租户+10万用户**的企业级生产系统，负责租户的创建、配置、资源分配、计费管理等功能，实现真正的多租户SaaS架构。
 
@@ -11,7 +11,7 @@
 - **隔离等级**: 数据库级隔离，确保租户数据安全
 - **部署方式**: Docker Compose，支持租户独立部署
 
-## 技术栈 (标准版本优化)
+## 🛠️ 技术栈
 
 ### 后端技术
 - **框架**: NestJS 10.x + TypeScript 5.x
@@ -37,7 +37,7 @@
 - **服务通信**: 通过API网关(3000) + 内部API(/internal/*)
 - **部署方式**: Docker Compose单机或8GB内存小集群
 
-## 核心功能模块
+## 📋 完整功能列表
 
 ### 1. 租户管理模块
 ```typescript
@@ -78,7 +78,7 @@ GET    /api/v1/tenants/{id}/invoices   // 获取账单列表
 POST   /api/v1/tenants/{id}/payments   // 处理支付
 ```
 
-## 数据库设计
+## 🗄️ 数据库设计
 
 ### 租户主表 (tenants)
 ```sql
@@ -149,7 +149,7 @@ CREATE TABLE subscription_plans (
 );
 ```
 
-## 多租户架构模式
+## 🏗️ 核心架构实现
 
 ### 1. 数据库隔离策略
 ```typescript
@@ -465,7 +465,7 @@ export class TenantSecurityGuard implements CanActivate {
 }
 ```
 
-## 性能优化
+## ⚡ 性能优化
 
 ### 租户配置缓存
 ```typescript
@@ -525,7 +525,91 @@ export class TenantConnectionManager {
 }
 ```
 
-## 监控指标
+## 📈 监控和告警
+
+### Prometheus指标收集
+```typescript
+// 多租户管理服务核心指标
+const tenantMetrics = {
+  // 业务指标
+  'tenant_operations_total': Counter,
+  'tenant_operation_duration_seconds': Histogram,
+  'tenant_errors_total': Counter,
+  'tenant_active_count': Gauge,
+  'tenant_quota_usage_percent': Histogram,
+  'tenant_billing_events_total': Counter,
+
+  // 系统指标
+  'tenant_service_memory_usage_bytes': Gauge,
+  'tenant_service_cpu_usage_percent': Gauge,
+  'tenant_database_connections_active': Gauge,
+  'tenant_config_cache_hit_rate': Gauge
+}
+```
+
+### 告警规则
+```yaml
+groups:
+  - name: tenant-management-alerts
+    rules:
+      - alert: TenantServiceHighErrorRate
+        expr: rate(tenant_errors_total[5m]) / rate(tenant_operations_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "多租户管理服务错误率过高"
+
+      - alert: TenantQuotaExceeded
+        expr: tenant_quota_usage_percent > 90
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "租户配额使用率超过90%"
+
+      - alert: TenantDatabaseConnectionsHigh
+        expr: tenant_database_connections_active > 80
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "租户数据库连接数过高"
+```
+
+### 健康检查
+```typescript
+@Controller('health')
+export class HealthController {
+  @Get()
+  async checkHealth(): Promise<HealthStatus> {
+    const checks = await Promise.allSettled([
+      this.checkDatabase(),
+      this.checkRedis(),
+      this.checkStripeConnectivity(),
+      this.checkTenantServices()
+    ]);
+
+    return {
+      status: checks.every(c => c.status === 'fulfilled') ? 'healthy' : 'unhealthy',
+      service: 'tenant-management-service',
+      dependencies: {
+        database: checks[0].status === 'fulfilled',
+        redis: checks[1].status === 'fulfilled',
+        stripe: checks[2].status === 'fulfilled',
+        tenant_services: checks[3].status === 'fulfilled'
+      },
+      metrics: {
+        activeTenants: await this.getActiveTenantCount(),
+        totalQuotaUsage: await this.getTotalQuotaUsage(),
+        cacheHitRate: await this.getCacheHitRate()
+      }
+    };
+  }
+}
+```
+
+### 原有监控指标
 
 ### 租户指标
 - 活跃租户数量
@@ -541,7 +625,7 @@ export class TenantConnectionManager {
 - 跨租户访问尝试
 - 配额超限告警
 
-## 🗓️ 项目规划 (标准版本4周计划)
+## 🐳 部署配置
 
 ### Week 1: 基础架构 (第5优先级)
 多租户管理服务在Week 2启动，依赖用户管理服务(Week 1)完成。
@@ -761,7 +845,265 @@ export class ServiceDiscovery {
 }
 ```
 
-## 部署配置
+## 🧪 测试策略
+
+### 单元测试
+```typescript
+describe('TenantManagementService', () => {
+  it('should create tenant successfully', async () => {
+    const tenantData = {
+      name: 'Test Tenant',
+      slug: 'test-tenant',
+      planId: 'basic-plan'
+    };
+    
+    const result = await service.createTenant(tenantData);
+    expect(result).toBeDefined();
+    expect(result.status).toBe('active');
+    expect(result.slug).toBe('test-tenant');
+  });
+
+  it('should handle tenant quota checks', async () => {
+    const quotaCheck = await service.checkQuota('tenant-id', 'users', 50);
+    expect(quotaCheck.allowed).toBeDefined();
+    expect(quotaCheck.remaining).toBeGreaterThanOrEqual(0);
+  });
+
+  it('should handle billing plan upgrades', async () => {
+    const result = await service.upgradePlan('tenant-id', 'premium-plan');
+    expect(result.success).toBe(true);
+    expect(result.newPlan).toBe('premium-plan');
+  });
+
+  it('should handle errors gracefully', async () => {
+    await expect(service.createTenant(invalidData))
+      .rejects.toThrow('Invalid tenant data');
+  });
+});
+```
+
+### 集成测试
+```typescript
+describe('Tenant Management E2E', () => {
+  it('should complete full tenant lifecycle', async () => {
+    // 创建租户
+    const createResponse = await request(app.getHttpServer())
+      .post('/api/v1/tenants')
+      .send(tenantPayload)
+      .expect(201);
+
+    const tenantId = createResponse.body.data.id;
+
+    // 配置租户
+    await request(app.getHttpServer())
+      .put(`/api/v1/tenants/${tenantId}/config`)
+      .send(configPayload)
+      .expect(200);
+
+    // 检查配额
+    await request(app.getHttpServer())
+      .get(`/api/v1/tenants/${tenantId}/quotas`)
+      .expect(200);
+
+    // 删除租户
+    await request(app.getHttpServer())
+      .delete(`/api/v1/tenants/${tenantId}`)
+      .expect(204);
+  });
+
+  it('should integrate with billing service', async () => {
+    const response = await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${tenantId}/billing/plans`)
+      .send({ planId: 'premium' })
+      .expect(200);
+
+    expect(response.body.billing.status).toBe('active');
+  });
+
+  it('should enforce quota limits', async () => {
+    // 超出配额应该被拒绝
+    await request(app.getHttpServer())
+      .post(`/api/v1/tenants/${tenantId}/quotas/check`)
+      .send({ resource: 'users', amount: 10000 })
+      .expect(403);
+  });
+});
+```
+
+### 性能测试
+```typescript
+describe('Tenant Management Performance', () => {
+  it('should handle concurrent tenant operations', async () => {
+    const concurrentOps = Array(50).fill(0).map(() => 
+      service.getTenantConfig('test-tenant-id')
+    );
+    
+    const results = await Promise.all(concurrentOps);
+    expect(results).toHaveLength(50);
+    expect(results.every(r => r !== null)).toBe(true);
+  });
+
+  it('should maintain performance under load', async () => {
+    const startTime = Date.now();
+    
+    for (let i = 0; i < 1000; i++) {
+      await service.checkQuota('tenant-id', 'api_calls', 1);
+    }
+    
+    const duration = Date.now() - startTime;
+    expect(duration).toBeLessThan(5000); // 5秒内完成1000次配额检查
+  });
+});
+```
+
+### 负载测试
+- **并发租户创建**: 支持100个并发租户创建请求
+- **配额检查性能**: 1000 QPS配额检查能力
+- **计费处理**: 支持实时计费事件处理
+- **缓存性能**: 配置缓存99%命中率
+
+## 🛡️ 安全措施
+
+### 数据安全
+- **数据加密**: 敏感配置AES-256加密存储
+- **传输安全**: HTTPS强制，TLS 1.3协议
+- **数据脱敏**: 日志中隐藏敏感信息(API密钥、支付信息)
+- **备份安全**: 加密备份，异地存储租户数据
+- **PII保护**: 个人信息自动检测和保护
+
+### 访问控制
+- **身份认证**: JWT令牌验证，支持令牌刷新
+- **权限控制**: 基于RBAC的细粒度权限管理
+- **API安全**: 请求频率限制，防止暴力攻击
+- **输入验证**: 严格的参数验证，防止注入攻击
+- **跨租户隔离**: 强制租户数据隔离，防止数据泄露
+
+### 多租户安全
+```typescript
+// 租户数据隔离中间件
+@Injectable()
+export class TenantIsolationMiddleware implements NestMiddleware {
+  use(req: Request, res: Response, next: NextFunction) {
+    const userTenantId = req.user?.tenantId;
+    const requestTenantId = req.params.tenantId || req.body.tenantId;
+    
+    // 严格的跨租户访问检查
+    if (requestTenantId && requestTenantId !== userTenantId) {
+      throw new ForbiddenException('Cross-tenant access denied');
+    }
+    
+    // 设置租户上下文
+    req['tenantContext'] = {
+      tenantId: userTenantId,
+      permissions: req.user?.permissions || [],
+      quotas: await this.getQuotaLimits(userTenantId)
+    };
+    
+    next();
+  }
+}
+```
+
+### 内部服务安全
+- **服务认证**: X-Service-Token内部服务认证
+- **网络隔离**: Docker网络隔离，最小权限原则
+- **密钥管理**: 环境变量管理敏感配置
+- **审计日志**: 完整的操作审计链路
+- **加密通信**: 内部服务间TLS加密
+
+### 计费安全
+```typescript
+// Stripe Webhook安全验证
+@Post('stripe/webhook')
+async handleStripeWebhook(
+  @Body() payload: any,
+  @Headers('stripe-signature') signature: string
+) {
+  try {
+    const event = this.stripe.webhooks.constructEvent(
+      payload,
+      signature,
+      process.env.STRIPE_WEBHOOK_SECRET
+    );
+    
+    await this.billingService.processWebhookEvent(event);
+    return { received: true };
+  } catch (error) {
+    throw new BadRequestException('Invalid webhook signature');
+  }
+}
+```
+
+## 📅 项目规划
+
+### 🔗 API设计
+
+#### 租户管理API
+```typescript
+// 租户CRUD操作
+POST   /api/v1/tenants                    // 创建租户
+GET    /api/v1/tenants                    // 获取租户列表
+GET    /api/v1/tenants/{id}               // 获取租户详情
+PUT    /api/v1/tenants/{id}               // 更新租户信息
+DELETE /api/v1/tenants/{id}               // 删除租户
+PATCH  /api/v1/tenants/{id}/status        // 更新租户状态
+
+// 租户配置管理
+GET    /api/v1/tenants/{id}/config        // 获取租户配置
+PUT    /api/v1/tenants/{id}/config        // 更新租户配置
+POST   /api/v1/tenants/{id}/config/reset  // 重置为默认配置
+GET    /api/v1/tenants/{id}/features      // 获取功能特性
+PATCH  /api/v1/tenants/{id}/features      // 启用/禁用功能
+
+// 资源配额管理
+GET    /api/v1/tenants/{id}/quotas        // 获取资源配额
+PUT    /api/v1/tenants/{id}/quotas        // 设置资源配额
+GET    /api/v1/tenants/{id}/usage         // 获取资源使用情况
+POST   /api/v1/tenants/{id}/quotas/check  // 检查配额限制
+
+// 计费管理
+GET    /api/v1/tenants/{id}/billing       // 获取计费信息
+POST   /api/v1/tenants/{id}/billing/plans // 更改计费计划
+GET    /api/v1/tenants/{id}/invoices      // 获取账单列表
+POST   /api/v1/tenants/{id}/payments      // 处理支付
+
+// 内部API (供其他服务调用)
+GET    /internal/tenants/{id}/context     // 获取租户上下文
+GET    /internal/tenants/{id}/features    // 获取租户功能特性
+POST   /internal/tenants/{id}/usage      // 记录资源使用量
+GET    /internal/tenants/{id}/quotas     // 检查配额限制
+POST   /internal/tenants/validate        // 验证租户有效性
+```
+
+#### API请求/响应格式
+```typescript
+// 创建租户请求
+interface CreateTenantRequest {
+  name: string;
+  slug: string;
+  domain?: string;
+  planId: string;
+  ownerId: string;
+  settings?: Record<string, any>;
+  features?: Record<string, boolean>;
+}
+
+// 租户响应
+interface TenantResponse {
+  id: string;
+  name: string;
+  slug: string;
+  domain: string;
+  status: 'active' | 'suspended' | 'deleted';
+  plan: SubscriptionPlan;
+  owner: UserInfo;
+  settings: Record<string, any>;
+  features: Record<string, boolean>;
+  quotas: QuotaInfo[];
+  createdAt: string;
+  updatedAt: string;
+}
+```
 
 ### 环境变量 (标准版本)
 ```env
