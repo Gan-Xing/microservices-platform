@@ -1,6 +1,6 @@
 # 消息通知服务开发文档 - 标准版本
 
-## 服务概述
+## 🎯 服务概述
 
 消息通知服务是微服务平台的通信核心，面向**100租户+10万用户**的企业级生产系统，负责多渠道消息推送、模板管理、发送状态追踪等功能，为整个平台提供统一的消息通知能力。
 
@@ -15,7 +15,7 @@
 - **渠道支持**: 邮件、短信、推送、WebSocket、Webhook
 - **部署方式**: Docker Compose + Redis队列
 
-## 技术栈
+## 🛠️ 技术栈
 
 ### 后端技术 (标准版本)
 - **框架**: NestJS 10.x + TypeScript 5.x
@@ -32,7 +32,7 @@
 - **指标**: Prometheus + Grafana
 - **健康检查**: NestJS Health Check
 
-## 核心功能模块
+## 📋 完整功能列表
 
 ### 1. 消息模板管理
 ```typescript
@@ -186,7 +186,7 @@ interface PreferenceService {
 }
 ```
 
-## 数据库设计
+## 🗄️ 数据库设计
 
 ### PostgreSQL 表结构
 ```sql
@@ -287,7 +287,7 @@ interface RedisCache {
 }
 ```
 
-## API 设计
+## 🔗 API设计
 
 ### RESTful API 端点
 ```typescript
@@ -418,7 +418,9 @@ export class NotificationGateway {
 }
 ```
 
-## 第三方集成
+## 🏗️ 核心架构实现
+
+### 第三方集成
 
 ### 邮件服务提供商
 ```typescript
@@ -492,7 +494,7 @@ export class JPushProvider implements PushProvider {
 }
 ```
 
-## 配置管理
+### 配置管理
 
 ### 环境变量配置
 ```typescript
@@ -597,7 +599,7 @@ interface NotificationConfig {
 }
 ```
 
-## 项目规划
+## 🔄 服务间交互设计
 
 ### 开发里程碑 (Week 3)
 
@@ -643,7 +645,7 @@ interface NotificationConfig {
 - 设置Redis队列监控和自动扩容
 - 建立服务降级和熔断保护
 
-## 服务间交互设计
+### 服务间交互设计
 
 ### 内部API接口
 
@@ -737,7 +739,215 @@ export class ServiceCallService {
 }
 ```
 
-## 部署方案
+## ⚡ 性能优化
+
+### 数据库连接池优化
+```typescript
+// 数据库连接池配置
+interface DatabaseConfig {
+  max: 20,        // 最大连接数
+  min: 5,         // 最小连接数
+  idle: 10000,    // 空闲超时
+  acquire: 30000, // 获取连接超时
+  evict: 1000,    // 检查间隔
+}
+```
+
+### Redis缓存优化
+```typescript
+// 模板缓存策略
+@Injectable()
+export class TemplateCacheService {
+  private readonly cache = new Map<string, NotificationTemplate>()
+  private readonly ttl = 30 * 60 * 1000 // 30分钟
+  
+  async getTemplate(templateId: string): Promise<NotificationTemplate> {
+    // 先从内存缓存获取
+    if (this.cache.has(templateId)) {
+      return this.cache.get(templateId)
+    }
+    
+    // 再从Redis获取
+    const cached = await this.redis.get(`template:${templateId}`)
+    if (cached) {
+      const template = JSON.parse(cached)
+      this.cache.set(templateId, template)
+      return template
+    }
+    
+    // 最后从数据库加载
+    const template = await this.templateRepository.findById(templateId)
+    await this.cacheTemplate(template)
+    return template
+  }
+}
+```
+
+### 消息队列优化
+```typescript
+// 高优先级队列配置
+@Injectable()
+export class PriorityQueueService {
+  async addToQueue(message: NotificationMessage, priority: 'high' | 'normal' | 'low') {
+    const queueName = `notification:${priority}`
+    const delay = priority === 'high' ? 0 : priority === 'normal' ? 1000 : 5000
+    
+    await this.queue.add(queueName, message, {
+      priority: priority === 'high' ? 10 : priority === 'normal' ? 5 : 1,
+      delay,
+      attempts: 3,
+      backoff: {
+        type: 'exponential',
+        delay: 2000
+      }
+    })
+  }
+}
+```
+
+## 🛡️ 安全措施
+
+### 数据安全
+- **数据加密**: 敏感通知内容AES-256加密存储
+- **传输安全**: HTTPS强制，TLS 1.3协议
+- **数据脱敏**: 日志中隐藏敏感信息(邮箱、手机号等)
+- **备份安全**: 加密备份，异地存储通知数据
+- **个人信息保护**: 自动检测和保护PII数据
+
+### 访问控制
+- **身份认证**: JWT令牌验证，支持令牌刷新
+- **权限控制**: 基于RBAC的细粒度权限管理
+- **API安全**: 请求频率限制，防止暴力攻击
+- **输入验证**: 严格的参数验证，防止注入攻击
+- **通知隐私**: 用户可控制通知频率和内容
+
+### 内部服务安全
+- **服务认证**: X-Service-Token内部服务认证
+- **网络隔离**: Docker网络隔离，最小权限原则
+- **密钥管理**: 环境变量管理敏感配置
+- **审计日志**: 完整的操作审计链路
+- **第三方安全**: API密钥加密存储和轮换
+
+### 通知安全措施
+```typescript
+// 通知内容安全校验
+@Injectable()
+export class ContentSecurityService {
+  validateNotificationContent(content: string, channel: string): boolean {
+    // 检查恶意内容
+    if (this.containsMaliciousContent(content)) {
+      throw new BadRequestException('Malicious content detected')
+    }
+    
+    // 检查敏感信息
+    if (this.containsSensitiveInfo(content)) {
+      content = this.maskSensitiveInfo(content)
+    }
+    
+    // 校验内容长度
+    if (content.length > this.getMaxLength(channel)) {
+      throw new BadRequestException('Content too long')
+    }
+    
+    return true
+  }
+  
+  // 防止邮件欺骗
+  validateEmailSender(sender: string, tenantId: string): boolean {
+    const allowedDomains = this.getAllowedDomains(tenantId)
+    const senderDomain = sender.split('@')[1]
+    
+    return allowedDomains.includes(senderDomain)
+  }
+}
+```
+
+## 📈 监控和告警
+
+### Prometheus指标收集
+```typescript
+// 消息通知服务核心指标
+const notificationMetrics = {
+  // 业务指标
+  'notification_operations_total': Counter,
+  'notification_operation_duration_seconds': Histogram,
+  'notification_errors_total': Counter,
+  'notification_messages_sent_total': Counter,
+  'notification_delivery_rate': Histogram,
+  'notification_queue_length': Gauge,
+  'notification_template_usage': Counter,
+
+  // 系统指标
+  'notification_service_memory_usage_bytes': Gauge,
+  'notification_service_cpu_usage_percent': Gauge,
+  'notification_redis_connections_active': Gauge,
+  'notification_email_provider_latency': Histogram
+}
+```
+
+### 告警规则
+```yaml
+groups:
+  - name: notification-service-alerts
+    rules:
+      - alert: NotificationServiceHighErrorRate
+        expr: rate(notification_errors_total[5m]) / rate(notification_operations_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "消息通知服务错误率过高"
+
+      - alert: NotificationQueueTooLong
+        expr: notification_queue_length > 1000
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "消息队列过长"
+
+      - alert: NotificationDeliveryRateLow
+        expr: rate(notification_messages_sent_total{status="delivered"}[10m]) / rate(notification_messages_sent_total[10m]) < 0.95
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "消息送达率过低"
+```
+
+### 健康检查
+```typescript
+@Controller('health')
+export class HealthController {
+  @Get()
+  async checkHealth(): Promise<HealthStatus> {
+    const checks = await Promise.allSettled([
+      this.checkDatabase(),
+      this.checkRedis(),
+      this.checkEmailProvider(),
+      this.checkQueueStatus()
+    ]);
+
+    return {
+      status: checks.every(c => c.status === 'fulfilled') ? 'healthy' : 'unhealthy',
+      service: 'notification-service',
+      dependencies: {
+        database: checks[0].status === 'fulfilled',
+        redis: checks[1].status === 'fulfilled',
+        email_provider: checks[2].status === 'fulfilled',
+        queue_system: checks[3].status === 'fulfilled'
+      },
+      metrics: {
+        pendingMessages: await this.getQueueLength(),
+        dailySentCount: await this.getDailySentCount(),
+        errorRate: await this.getErrorRate()
+      }
+    };
+  }
+}
+```
+
+## 🐳 部署配置
 
 ### Docker Compose 配置
 ```yaml
@@ -811,7 +1021,7 @@ networks:
     external: true
 ```
 
-## 监控告警
+### 监控告警
 
 ### 关键指标
 ```typescript
@@ -882,7 +1092,135 @@ groups:
       description: "95th percentile processing time is {{ $value }}s"
 ```
 
-## 开发指南
+## 🧪 测试策略
+
+### 单元测试
+```typescript
+describe('NotificationService', () => {
+  it('should send email notification successfully', async () => {
+    const messageData = {
+      channel: 'email',
+      recipient: 'test@example.com',
+      subject: 'Test Notification',
+      content: 'This is a test message'
+    };
+    
+    const result = await service.sendNotification(messageData);
+    expect(result).toBeDefined();
+    expect(result.status).toBe('sent');
+    expect(result.channel).toBe('email');
+  });
+
+  it('should handle template rendering correctly', async () => {
+    const templateData = {
+      templateId: 'welcome-email',
+      variables: { name: 'John', company: 'Test Corp' }
+    };
+    
+    const result = await service.renderTemplate(templateData.templateId, templateData.variables);
+    expect(result).toContain('John');
+    expect(result).toContain('Test Corp');
+  });
+
+  it('should handle notification failures gracefully', async () => {
+    const invalidData = { channel: 'invalid', recipient: '' };
+    
+    await expect(service.sendNotification(invalidData))
+      .rejects.toThrow('Invalid notification data');
+  });
+});
+```
+
+### 集成测试
+```typescript
+describe('Notification Service E2E', () => {
+  it('should complete full notification workflow', async () => {
+    // 创建模板
+    const templateResponse = await request(app.getHttpServer())
+      .post('/api/v1/templates')
+      .send(templatePayload)
+      .expect(201);
+
+    // 发送通知
+    const notificationResponse = await request(app.getHttpServer())
+      .post('/api/v1/messages/send')
+      .send({
+        templateId: templateResponse.body.id,
+        recipient: 'test@example.com',
+        variables: { name: 'Test User' }
+      })
+      .expect(201);
+
+    // 检查状态
+    await request(app.getHttpServer())
+      .get(`/api/v1/messages/${notificationResponse.body.id}/status`)
+      .expect(200);
+  });
+
+  it('should handle batch notifications', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/v1/messages/send/batch')
+      .send(batchNotificationPayload)
+      .expect(201);
+
+    expect(response.body.length).toBe(3);
+  });
+
+  it('should respect user preferences', async () => {
+    // 设置用户偏好
+    await request(app.getHttpServer())
+      .put('/api/v1/preferences')
+      .send({ email: { enabled: false } })
+      .expect(200);
+
+    // 尝试发送邮件应该被拒绝
+    await request(app.getHttpServer())
+      .post('/api/v1/messages/send')
+      .send({ channel: 'email', recipient: 'user@example.com' })
+      .expect(403);
+  });
+});
+```
+
+### 性能测试
+```typescript
+describe('Notification Performance', () => {
+  it('should handle high message volume', async () => {
+    const promises = Array(1000).fill(0).map(() => 
+      service.sendNotification({
+        channel: 'email',
+        recipient: 'test@example.com',
+        content: 'Load test message'
+      })
+    );
+    
+    const results = await Promise.allSettled(promises);
+    const successCount = results.filter(r => r.status === 'fulfilled').length;
+    expect(successCount).toBeGreaterThan(950); // 95%成功率
+  });
+
+  it('should maintain low latency under load', async () => {
+    const startTime = Date.now();
+    
+    await Promise.all([
+      service.sendNotification(testNotification),
+      service.sendNotification(testNotification),
+      service.sendNotification(testNotification)
+    ]);
+    
+    const duration = Date.now() - startTime;
+    expect(duration).toBeLessThan(2000); // 2秒内完成
+  });
+});
+```
+
+### 负载测试
+- **并发消息发送**: 支持1000个并发消息处理
+- **队列处理性能**: 每分钟处琅3000条消息
+- **模板渲染**: 支持复杂模板高速渲染
+- **缓存性能**: 模板缓存99%命中率
+
+## 📅 项目规划
 
 ### 本地开发环境
 ```bash
@@ -907,7 +1245,9 @@ npm run test
 npm run test:e2e
 ```
 
-### 代码规范
+### 开发指南
+
+#### 代码规范
 ```typescript
 // ESLint + Prettier 配置
 {
@@ -922,7 +1262,7 @@ npm run test:e2e
 }
 ```
 
-### 测试策略
+#### 测试策略
 ```typescript
 // 单元测试示例
 describe('NotificationService', () => {
@@ -978,7 +1318,7 @@ describe('NotificationController (e2e)', () => {
 })
 ```
 
-### 快速开始
+#### 快速开始
 
 ```bash
 # 1. 启动基础设施
@@ -1008,7 +1348,7 @@ curl -X POST http://localhost:3005/api/v1/messages/send \
   }'
 ```
 
-### 环境变量配置
+#### 环境变量配置
 
 ```bash
 # .env
@@ -1047,7 +1387,34 @@ RATE_LIMIT_SMS_PER_MINUTE=20
 RATE_LIMIT_PUSH_PER_MINUTE=200
 ```
 
-## 生产部署检查清单
+## ✅ 开发完成情况总结
+
+### 当前开发进度
+- ✅ 服务架构设计完成
+- ✅ 数据库设计完成
+- ✅ API设计完成
+- ✅ 第三方集成方案完成
+- ✅ 监控告警设计完成
+- ✅ 安全方案设计完成
+- ✅ 测试策略完成
+- ✅ 部署配置完成
+
+### 代码实现状态
+- ⏳ 核心服务模块 (0%)
+- ⏳ 消息队列处理 (0%)
+- ⏳ 多渠道集成 (0%)
+- ⏳ WebSocket实时通知 (0%)
+- ⏳ 用户偏好管理 (0%)
+- ⏳ 统计分析 (0%)
+
+### 下一步开发计划
+1. **Week 3.1**: 实现消息模板管理和邮件通知
+2. **Week 3.2**: 实现Redis队列和失败重试机制
+3. **Week 3.3**: 实现WebSocket实时通知和用户偏好
+4. **Week 3.4**: 集成其他微服务和性能优化
+5. **Week 3.5**: 完成测试和部署配置
+
+### 生产部署检查清单
 
 ### 部署前检查
 - [ ] 确认服务器资源：1GB内存，0.5CPU核心
