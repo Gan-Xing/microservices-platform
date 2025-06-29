@@ -837,8 +837,8 @@ services:
       - "3004:3004"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
-      - REDIS_URL=redis://redis:6379/2
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379/4
       - SERVICE_PORT=3004
       - SERVICE_NAME=tenant-management-service
     depends_on:
@@ -857,8 +857,10 @@ services:
       resources:
         limits:
           memory: 1.2G
+          cpus: '0.75'
         reservations:
           memory: 800M
+          cpus: '0.5'
     restart: unless-stopped
 
   # 共享PostgreSQL实例

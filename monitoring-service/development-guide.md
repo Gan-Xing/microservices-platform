@@ -72,6 +72,72 @@
 - **告警事件**: 告警状态变化推送
 - **健康状态**: 服务健康状态推送
 
+### 分页参数标准化设计
+
+监控服务处理大量实时数据，需要高性能的分页策略支持每秒10万指标点的查询和展示。
+
+#### 标准分页参数
+```typescript
+interface PaginationParams {
+  page?: number;      // 页码，从1开始，默认1
+  limit?: number;     // 每页大小，默认20，最大100
+  offset?: number;    // 偏移量，用于基于游标的分页
+  sort?: string;      // 排序字段，默认按时间倒序
+  order?: 'asc' | 'desc'; // 排序方向，默认desc
+}
+
+interface TimeRangeParams {
+  startTime?: string; // 开始时间 ISO 8601格式
+  endTime?: string;   // 结束时间 ISO 8601格式
+  interval?: string;  // 时间间隔 (1m, 5m, 1h, 1d)
+}
+
+interface PaginationResponse<T> {
+  data: T[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
+  timeRange?: {
+    start: string;
+    end: string;
+    interval: string;
+  };
+}
+```
+
+#### 核心分页端点设计
+
+**指标数据查询 (支持时间聚合和分页)**
+```
+GET /api/v1/monitoring/metrics?page=1&limit=100&startTime=2024-01-01T00:00:00Z&endTime=2024-01-01T01:00:00Z&interval=1m&metrics=cpu_usage,memory_usage
+```
+
+**系统日志查询 (支持时间范围和分页)**
+```
+GET /api/v1/monitoring/logs?page=1&limit=50&startTime=2024-01-01T00:00:00Z&endTime=2024-01-02T00:00:00Z&sort=timestamp&order=desc&level=error
+```
+
+**告警记录查询 (支持状态过滤和分页)**
+```
+GET /api/v1/monitoring/alerts?page=1&limit=25&state=active&severity=critical&startTime=2024-01-01T00:00:00Z&sort=fired_at&order=desc
+```
+
+**故障事件查询 (支持状态和优先级过滤)**
+```
+GET /api/v1/monitoring/incidents?page=1&limit=20&status=open&priority=high&startTime=2024-01-01T00:00:00Z&sort=created_at&order=desc
+```
+
+#### 大数据量分页优化策略
+- **基于时间戳的游标分页**: 避免深度分页性能问题
+- **智能缓存策略**: Redis缓存热点查询和预计算总数
+- **时间分区查询**: 利用PostgreSQL时间分区提升查询效率
+- **流式分页**: 支持实时数据的增量分页加载
+
 ## 🗄️ 数据库设计
 
 ### PostgreSQL表结构 (共享数据库实例)
@@ -329,19 +395,72 @@ interface MonitoringError {
 
 ### 查询性能优化
 ```typescript
-// 指标查询优化
+// 指标查询优化 - 支持分页和时间范围
 class MetricsOptimization {
-  // 时间范围索引
-  async queryMetrics(timeRange: TimeRange) {
+  // 时间范围索引和分页查询
+  async queryMetrics(timeRange: TimeRange, pagination: PaginationParams) {
     // 使用时间分区查询
     // 批量聚合计算
     // Redis缓存结果
+    // 支持游标分页提升大数据量性能
   }
   
   // 实时数据缓存
   async cacheRealTimeMetrics() {
     // 15秒缓存窗口
     // 内存预聚合
+    // 分页缓存策略
+  }
+  
+  // 大数据量分页优化
+  async paginateTimeSeriesData(query: MetricQuery, pagination: PaginationParams) {
+    // 基于时间戳的游标分页
+    // 避免深度分页性能问题
+    // 预计算总数缓存
+    // 智能分页大小调整
+  }
+}
+
+// 日志查询分页优化
+class LogQueryOptimization {
+  async paginateLogs(filters: LogFilters, pagination: PaginationParams) {
+    // 时间范围优先查询
+    // 全文搜索索引优化
+    // 分级缓存策略
+    const query = this.buildOptimizedQuery(filters, pagination);
+    
+    if (pagination.offset > 10000) {
+      // 深度分页优化: 使用游标模式
+      return this.cursorBasedPagination(query, pagination);
+    }
+    
+    return this.standardPagination(query, pagination);
+  }
+  
+  // 基于游标的分页 (适合大数据量)
+  async cursorBasedPagination(query: LogQuery, pagination: PaginationParams) {
+    // 使用timestamp作为游标
+    // 避免OFFSET导致的性能问题
+    // 适合实时日志流查询
+  }
+}
+
+// 告警分页优化
+class AlertPaginationOptimizer {
+  async paginateAlerts(filters: AlertFilters, pagination: PaginationParams) {
+    // 状态索引优化
+    // 时间范围预过滤
+    // 智能缓存热点告警
+    
+    const cacheKey = this.generateCacheKey(filters, pagination);
+    const cached = await this.redis.get(cacheKey);
+    
+    if (cached && pagination.page <= 5) {
+      // 前5页使用缓存
+      return JSON.parse(cached);
+    }
+    
+    return this.queryDatabase(filters, pagination);
   }
 }
 ```
@@ -471,17 +590,36 @@ services:
       - "3007:3007"
     environment:
       # 共享数据库连接
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
       # 专用Redis命名空间
       - REDIS_URL=redis://redis:6379/7
       # 监控组件连接
       - PROMETHEUS_URL=http://prometheus:9090
       - GRAFANA_URL=http://grafana:3000
     depends_on:
-      - postgres
-      - redis
-      - prometheus
-      - grafana
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+      grafana:
+        condition: service_healthy
+    networks:
+      - platform-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3007/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.75'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
       
   # Prometheus 监控
   prometheus:
@@ -512,7 +650,7 @@ volumes:
 # 标准版本环境变量
 NODE_ENV=production
 PORT=3007
-DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
+DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
 REDIS_URL=redis://redis:6379/7
 PROMETHEUS_URL=http://prometheus:9090
 GRAFANA_URL=http://grafana:3000
@@ -640,16 +778,138 @@ describe('Monitoring E2E', () => {
 - **并发测试**: 100个并发告警评估测试
 - **容量测试**: 90天数据存储和查询性能测试
 - **稳定性测试**: 7x24小时连续运行测试
+- **分页性能测试**: 
+  - 大数据量分页查询性能测试 (100万条记录)
+  - 深度分页性能对比测试 (OFFSET vs 游标分页)
+  - 并发分页查询压力测试 (50个并发分页请求)
+  - 缓存命中率和响应时间测试
+
+### 分页功能验证测试
+```typescript
+describe('Monitoring Service Pagination', () => {
+  // 指标数据分页测试
+  it('should paginate metrics with time range', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/monitoring/metrics')
+      .query({
+        page: 1,
+        limit: 50,
+        startTime: '2024-01-01T00:00:00Z',
+        endTime: '2024-01-01T01:00:00Z',
+        interval: '1m'
+      })
+      .expect(200);
+
+    expect(response.body.data).toHaveLength(50);
+    expect(response.body.pagination.total).toBeGreaterThan(0);
+    expect(response.body.timeRange).toBeDefined();
+  });
+
+  // 日志分页测试
+  it('should paginate logs with filters', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/monitoring/logs')
+      .query({
+        page: 2,
+        limit: 25,
+        level: 'error',
+        startTime: '2024-01-01T00:00:00Z',
+        sort: 'timestamp',
+        order: 'desc'
+      })
+      .expect(200);
+
+    expect(response.body.pagination.page).toBe(2);
+    expect(response.body.pagination.hasNextPage).toBeDefined();
+  });
+
+  // 告警分页测试
+  it('should paginate alerts with state filter', async () => {
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/monitoring/alerts')
+      .query({
+        page: 1,
+        limit: 20,
+        state: 'active',
+        severity: 'critical'
+      })
+      .expect(200);
+
+    expect(response.body.data.every(alert => alert.state === 'active')).toBe(true);
+    expect(response.body.summary).toBeDefined();
+  });
+
+  // 大数据量深度分页测试
+  it('should handle deep pagination efficiently', async () => {
+    const startTime = Date.now();
+    
+    const response = await request(app.getHttpServer())
+      .get('/api/v1/monitoring/logs')
+      .query({
+        page: 500,  // 深度分页
+        limit: 20,
+        startTime: '2024-01-01T00:00:00Z'
+      })
+      .expect(200);
+
+    const endTime = Date.now();
+    const responseTime = endTime - startTime;
+    
+    // 深度分页响应时间应小于500ms
+    expect(responseTime).toBeLessThan(500);
+    expect(response.body.data).toBeDefined();
+  });
+
+  // 游标分页测试
+  it('should support cursor-based pagination for large datasets', async () => {
+    // 测试基于时间戳的游标分页
+    const firstPageResponse = await request(app.getHttpServer())
+      .get('/api/v1/monitoring/metrics')
+      .query({
+        limit: 100,
+        startTime: '2024-01-01T00:00:00Z',
+        endTime: '2024-01-01T23:59:59Z'
+      })
+      .expect(200);
+
+    const lastTimestamp = firstPageResponse.body.data[99].timestamp;
+    
+    const nextPageResponse = await request(app.getHttpServer())
+      .get('/api/v1/monitoring/metrics')
+      .query({
+        limit: 100,
+        cursor: lastTimestamp,
+        startTime: '2024-01-01T00:00:00Z',
+        endTime: '2024-01-01T23:59:59Z'
+      })
+      .expect(200);
+
+    expect(nextPageResponse.body.data[0].timestamp).toBeGreaterThan(lastTimestamp);
+  });
+});
+```
 
 ## 📅 项目规划
 
 ### 开发里程碑
 - **Week 4.1**: 基础监控管理功能实现 (指标收集、健康检查)
+  - 实现标准分页参数接口设计
+  - 完成指标数据查询分页功能
 - **Week 4.2**: 告警管理和事件管理完成
+  - 实现告警记录分页查询
+  - 完成故障事件列表分页
 - **Week 4.3**: 面板管理和Prometheus/Grafana集成
+  - 实现日志管理分页查询和搜索
+  - 完成仪表板列表分页功能
 - **Week 4.4**: 异常检测和服务间监控集成
+  - 优化大数据量分页性能
+  - 实现基于游标的分页策略
 - **Week 4.5**: 性能优化和生产环境测试
+  - 分页缓存策略优化
+  - 深度分页性能测试和调优
 - **Week 4.6**: 综合测试和部署验证
+  - 分页功能完整性测试
+  - 大数据量分页压力测试
 
 ### 资源分配
 - **端口**: 3007
@@ -664,6 +924,10 @@ describe('Monitoring E2E', () => {
 - **依赖风险**: 需要监控所有11个服务 - 高风险
 - **集成风险**: 与每个服务的健康检查集成 - 高风险
 - **性能风险**: 每秒10万指标点处理 - 高风险
+- **分页性能风险**: 大数据量深度分页可能导致查询超时 - 中风险
+  - **应对措施**: 实现基于游标的分页，避免OFFSET深度查询
+  - **缓存策略**: Redis缓存热点查询，预计算总数
+  - **分区优化**: 利用PostgreSQL时间分区提升查询性能
 - **时间风险**: Week 4最后交付，时间紧张 - 高风险
 
 ### 开发优先级

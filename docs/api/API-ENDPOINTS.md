@@ -1216,7 +1216,43 @@
 - 🔄 `GET /api/v1/mq/stats/consumers` - 获取消费者统计
 
 ### 健康检查
-- 🔧 `GET /api/v1/mq/health` - 服务健康检查
+- 🔧 `GET /api/v1/mq/health` - 综合健康检查
+- 🔧 `GET /api/v1/mq/ping` - Redis连接性检查
+- 🔧 `GET /api/v1/mq/status` - 详细服务状态
+
+**标准健康检查响应格式：**
+```json
+{
+  "status": "healthy|unhealthy|degraded",
+  "timestamp": "2024-01-01T10:00:00Z",
+  "service": "message-queue-service",
+  "version": "1.0.0",
+  "uptime": 86400,
+  "responseTime": 25,
+  "checks": {
+    "redisStreams": "healthy",
+    "database": "healthy", 
+    "queues": "healthy",
+    "consumers": "healthy",
+    "memory": "healthy",
+    "dependencies": "healthy"
+  },
+  "metrics": {
+    "messageQueue": {
+      "totalQueues": 12,
+      "totalMessages": 500000,
+      "pendingMessages": 50,
+      "processingRate": 800,
+      "errorRate": 0.01,
+      "averageLatency": 15
+    },
+    "consumers": {
+      "activeConsumers": 5,
+      "totalLag": 100
+    }
+  }
+}
+```
 
 ---
 
@@ -1258,9 +1294,42 @@
 - 🔄 `GET /api/v1/cache/throughput` - 吞吐量监控
 
 ### 健康检查
-- 🔧 `GET /api/v1/cache/health` - 服务健康检查
-- 🔧 `GET /api/v1/cache/ping` - 连接性检查
-- 🔧 `GET /api/v1/cache/status` - 服务状态
+- 🔧 `GET /api/v1/cache/health` - 综合健康检查
+- 🔧 `GET /api/v1/cache/ping` - Redis连接性检查
+- 🔧 `GET /api/v1/cache/status` - 详细服务状态
+
+**标准健康检查响应格式：**
+```json
+{
+  "status": "healthy|unhealthy|degraded",
+  "timestamp": "2024-01-01T10:00:00Z",
+  "service": "cache-service",
+  "version": "1.0.0",
+  "uptime": 86400,
+  "responseTime": 15,
+  "checks": {
+    "redis": "healthy",
+    "database": "healthy",
+    "memory": "healthy", 
+    "dependencies": "healthy"
+  },
+  "metrics": {
+    "cache": {
+      "hitRate": 0.85,
+      "totalKeys": 50000,
+      "memoryUsage": 150,
+      "operationsPerSecond": 1200
+    },
+    "system": {
+      "memory": {
+        "used": 180,
+        "total": 256,
+        "usage": 70
+      }
+    }
+  }
+}
+```
 
 ---
 

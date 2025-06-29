@@ -202,9 +202,9 @@ sequenceDiagram
     Lock-->>Cron: 释放调度锁
 ```
 
-## 🔗 任务类型设计
+### 任务类型设计
 
-### HTTP任务类型
+#### HTTP任务类型
 ```typescript
 interface HttpJobConfig {
   url: string;
@@ -239,7 +239,7 @@ export class HttpJobExecutor {
 }
 ```
 
-### 函数任务类型
+#### 函数任务类型
 ```typescript
 interface FunctionJobConfig {
   modulePath: string;
@@ -271,7 +271,7 @@ export class FunctionJobExecutor {
 }
 ```
 
-### 命令任务类型
+#### 命令任务类型
 ```typescript
 interface CommandJobConfig {
   command: string;
@@ -304,9 +304,9 @@ export class CommandJobExecutor {
 }
 ```
 
-## ⚙️ Cron表达式解析
+### Cron表达式解析
 
-### 表达式格式支持
+#### 表达式格式支持
 ```typescript
 // 标准Cron格式: 秒 分 时 日 月 周
 // 示例表达式
@@ -342,7 +342,7 @@ export class CronParser {
 }
 ```
 
-### 时区处理
+#### 时区处理
 ```typescript
 @Injectable()
 export class TimezoneHandler {
@@ -359,100 +359,9 @@ export class TimezoneHandler {
 }
 ```
 
-## 🔄 重试和错误处理
+### 分布式锁实现
 
-### 重试策略配置
-```typescript
-interface RetryConfig {
-  maxRetries: number;
-  retryDelayMs: number;
-  exponentialBackoff: boolean;
-  retryOnErrorTypes?: string[];
-  maxRetryDelayMs?: number;
-}
-
-@Injectable()
-export class RetryManager {
-  async executeWithRetry<T>(
-    job: () => Promise<T>,
-    config: RetryConfig
-  ): Promise<T> {
-    let lastError: Error;
-    
-    for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
-      try {
-        return await job();
-      } catch (error) {
-        lastError = error;
-        
-        if (attempt === config.maxRetries) {
-          break;
-        }
-        
-        if (!this.shouldRetry(error, config)) {
-          throw error;
-        }
-        
-        const delay = this.calculateDelay(attempt, config);
-        await this.delay(delay);
-      }
-    }
-    
-    throw lastError;
-  }
-  
-  private calculateDelay(attempt: number, config: RetryConfig): number {
-    let delay = config.retryDelayMs;
-    
-    if (config.exponentialBackoff) {
-      delay *= Math.pow(2, attempt);
-    }
-    
-    return Math.min(delay, config.maxRetryDelayMs || Infinity);
-  }
-}
-```
-
-### 错误分类处理
-```typescript
-enum JobErrorType {
-  TIMEOUT = 'TIMEOUT',
-  NETWORK_ERROR = 'NETWORK_ERROR',
-  VALIDATION_ERROR = 'VALIDATION_ERROR',
-  SYSTEM_ERROR = 'SYSTEM_ERROR',
-  USER_ERROR = 'USER_ERROR'
-}
-
-@Injectable()
-export class ErrorClassifier {
-  classifyError(error: Error): JobErrorType {
-    if (error.name === 'TimeoutError') {
-      return JobErrorType.TIMEOUT;
-    }
-    
-    if (error.message.includes('ECONNREFUSED')) {
-      return JobErrorType.NETWORK_ERROR;
-    }
-    
-    // 其他分类逻辑
-    return JobErrorType.SYSTEM_ERROR;
-  }
-  
-  shouldRetry(errorType: JobErrorType): boolean {
-    const retryableErrors = [
-      JobErrorType.TIMEOUT,
-      JobErrorType.NETWORK_ERROR,
-      JobErrorType.SYSTEM_ERROR
-    ];
-    
-    return retryableErrors.includes(errorType);
-  }
-}
-```
-
-## 🔒 分布式锁实现
-
-### Redis分布式锁
+#### Redis分布式锁
 ```typescript
 @Injectable()
 export class DistributedLockService {
@@ -518,7 +427,7 @@ export class DistributedLockService {
 }
 ```
 
-### 调度锁管理
+#### 调度锁管理
 ```typescript
 @Injectable()
 export class SchedulerLockManager {
@@ -543,74 +452,6 @@ export class SchedulerLockManager {
 }
 ```
 
-## 📊 性能指标
-
-### 业务指标
-```typescript
-interface SchedulerMetrics {
-  // 任务统计
-  totalJobs: number;
-  activeJobs: number;
-  pausedJobs: number;
-  
-  // 执行统计
-  totalExecutions: number;
-  successfulExecutions: number;
-  failedExecutions: number;
-  cancelledExecutions: number;
-  
-  // 性能指标
-  averageExecutionTime: number;
-  queueLength: number;
-  activeWorkers: number;
-  
-  // 错误率
-  errorRate: number;
-  timeoutRate: number;
-  retryRate: number;
-}
-
-@Injectable()
-export class MetricsCollector {
-  @Cron('*/30 * * * * *') // 每30秒收集一次
-  async collectMetrics(): Promise<void> {
-    const metrics = await this.calculateMetrics();
-    
-    // 发送到监控系统
-    this.prometheusService.setGauge('scheduler_total_jobs', metrics.totalJobs);
-    this.prometheusService.setGauge('scheduler_queue_length', metrics.queueLength);
-    this.prometheusService.setGauge('scheduler_error_rate', metrics.errorRate);
-    
-    // 发送到数据库
-    await this.metricsRepository.save(metrics);
-  }
-}
-```
-
-### 性能监控
-```typescript
-// Prometheus指标定义
-const schedulerMetrics = {
-  jobExecutions: new Counter({
-    name: 'scheduler_job_executions_total',
-    help: 'Total number of job executions',
-    labelNames: ['job_type', 'status', 'tenant_id']
-  }),
-  
-  executionDuration: new Histogram({
-    name: 'scheduler_execution_duration_seconds',
-    help: 'Job execution duration in seconds',
-    labelNames: ['job_type', 'tenant_id'],
-    buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 300]
-  }),
-  
-  queueSize: new Gauge({
-    name: 'scheduler_queue_size',
-    help: 'Current size of job queue',
-    labelNames: ['queue_name']
-  })
-};
-```
 
 ## 🔗 API设计
 
@@ -672,8 +513,8 @@ interface SchedulerErrorResponse {
 ### 环境变量
 ```env
 # 数据库配置
-DATABASE_URL=postgresql://user:password@localhost:5432/scheduler
-REDIS_URL=redis://localhost:6379
+DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+REDIS_URL=redis://redis:6379/9
 
 # 调度配置
 SCHEDULER_WORKER_COUNT=5
@@ -682,9 +523,9 @@ SCHEDULER_JOB_TIMEOUT_MS=300000
 SCHEDULER_LOCK_TTL_MS=30000
 
 # 队列配置
-BULL_REDIS_HOST=localhost
+BULL_REDIS_HOST=redis
 BULL_REDIS_PORT=6379
-BULL_REDIS_DB=1
+BULL_REDIS_DB=9
 
 # 监控配置
 METRICS_ENABLED=true
@@ -692,7 +533,52 @@ PROMETHEUS_PORT=9464
 LOG_LEVEL=info
 ```
 
-### Docker配置
+### Docker Compose配置
+```yaml
+# docker-compose.yml
+services:
+  scheduler-service:
+    build: ./scheduler-service
+    container_name: scheduler-service
+    ports:
+      - "3009:3009"
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379/9
+      - BULL_REDIS_DB=9
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
+      - SCHEDULER_WORKER_COUNT=5
+      - SCHEDULER_MAX_CONCURRENT_JOBS=100
+      - METRICS_ENABLED=true
+      - LOG_LEVEL=info
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    networks:
+      - platform-network
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.75'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3009/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+```
+
+### Dockerfile
 ```dockerfile
 FROM node:18-alpine
 
@@ -785,6 +671,166 @@ TTL: 24小时
 // 下次执行时间缓存
 Cache Key: scheduler:next_execution:{jobId}
 TTL: 根据任务频率动态设置
+```
+
+### 重试和错误处理
+
+#### 重试策略配置
+```typescript
+interface RetryConfig {
+  maxRetries: number;
+  retryDelayMs: number;
+  exponentialBackoff: boolean;
+  retryOnErrorTypes?: string[];
+  maxRetryDelayMs?: number;
+}
+
+@Injectable()
+export class RetryManager {
+  async executeWithRetry<T>(
+    job: () => Promise<T>,
+    config: RetryConfig
+  ): Promise<T> {
+    let lastError: Error;
+    
+    for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+      try {
+        return await job();
+      } catch (error) {
+        lastError = error;
+        
+        if (attempt === config.maxRetries) {
+          break;
+        }
+        
+        if (!this.shouldRetry(error, config)) {
+          throw error;
+        }
+        
+        const delay = this.calculateDelay(attempt, config);
+        await this.delay(delay);
+      }
+    }
+    
+    throw lastError;
+  }
+  
+  private calculateDelay(attempt: number, config: RetryConfig): number {
+    let delay = config.retryDelayMs;
+    
+    if (config.exponentialBackoff) {
+      delay *= Math.pow(2, attempt);
+    }
+    
+    return Math.min(delay, config.maxRetryDelayMs || Infinity);
+  }
+}
+```
+
+#### 错误分类处理
+```typescript
+enum JobErrorType {
+  TIMEOUT = 'TIMEOUT',
+  NETWORK_ERROR = 'NETWORK_ERROR',
+  VALIDATION_ERROR = 'VALIDATION_ERROR',
+  SYSTEM_ERROR = 'SYSTEM_ERROR',
+  USER_ERROR = 'USER_ERROR'
+}
+
+@Injectable()
+export class ErrorClassifier {
+  classifyError(error: Error): JobErrorType {
+    if (error.name === 'TimeoutError') {
+      return JobErrorType.TIMEOUT;
+    }
+    
+    if (error.message.includes('ECONNREFUSED')) {
+      return JobErrorType.NETWORK_ERROR;
+    }
+    
+    // 其他分类逻辑
+    return JobErrorType.SYSTEM_ERROR;
+  }
+  
+  shouldRetry(errorType: JobErrorType): boolean {
+    const retryableErrors = [
+      JobErrorType.TIMEOUT,
+      JobErrorType.NETWORK_ERROR,
+      JobErrorType.SYSTEM_ERROR
+    ];
+    
+    return retryableErrors.includes(errorType);
+  }
+}
+```
+
+### 性能指标
+
+#### 业务指标
+```typescript
+interface SchedulerMetrics {
+  // 任务统计
+  totalJobs: number;
+  activeJobs: number;
+  pausedJobs: number;
+  
+  // 执行统计
+  totalExecutions: number;
+  successfulExecutions: number;
+  failedExecutions: number;
+  cancelledExecutions: number;
+  
+  // 性能指标
+  averageExecutionTime: number;
+  queueLength: number;
+  activeWorkers: number;
+  
+  // 错误率
+  errorRate: number;
+  timeoutRate: number;
+  retryRate: number;
+}
+
+@Injectable()
+export class MetricsCollector {
+  @Cron('*/30 * * * * *') // 每30秒收集一次
+  async collectMetrics(): Promise<void> {
+    const metrics = await this.calculateMetrics();
+    
+    // 发送到监控系统
+    this.prometheusService.setGauge('scheduler_total_jobs', metrics.totalJobs);
+    this.prometheusService.setGauge('scheduler_queue_length', metrics.queueLength);
+    this.prometheusService.setGauge('scheduler_error_rate', metrics.errorRate);
+    
+    // 发送到数据库
+    await this.metricsRepository.save(metrics);
+  }
+}
+```
+
+#### 性能监控
+```typescript
+// Prometheus指标定义
+const schedulerMetrics = {
+  jobExecutions: new Counter({
+    name: 'scheduler_job_executions_total',
+    help: 'Total number of job executions',
+    labelNames: ['job_type', 'status', 'tenant_id']
+  }),
+  
+  executionDuration: new Histogram({
+    name: 'scheduler_execution_duration_seconds',
+    help: 'Job execution duration in seconds',
+    labelNames: ['job_type', 'tenant_id'],
+    buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 300]
+  }),
+  
+  queueSize: new Gauge({
+    name: 'scheduler_queue_size',
+    help: 'Current size of job queue',
+    labelNames: ['queue_name']
+  })
+};
 ```
 
 ## 📅 项目规划

@@ -1,0 +1,75 @@
+# Prometheus 配置文件 - 企业级微服务平台标准版本
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: 'platform-standard'
+    environment: 'production'
+
+# 规则文件配置
+rule_files:
+  # - "alert_rules.yml"
+  # - "recording_rules.yml"
+
+# 抓取配置
+scrape_configs:
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # 平台微服务监控
+  - job_name: 'platform-services'
+    scrape_interval: 30s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets:
+          - 'api-gateway:3000'
+          - 'auth-service:3001'
+          - 'rbac-service:3002'
+          - 'user-management-service:3003'
+          - 'tenant-management-service:3004'
+          - 'notification-service:3005'
+          - 'file-storage-service:3006'
+          - 'monitoring-service:3007'
+          - 'audit-service:3008'
+          - 'scheduler-service:3009'
+          - 'message-queue-service:3010'
+          - 'cache-service:3011'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: '${__param_target}'
+
+  # 基础设施监控
+  - job_name: 'infrastructure'
+    scrape_interval: 30s
+    static_configs:
+      - targets:
+          - 'postgres:5432'
+          - 'redis:6379'
+          - 'minio:9000'
+        labels:
+          component: 'infrastructure'
+
+  # Docker 容器监控 (如果启用了 cAdvisor)
+  # - job_name: 'cadvisor'
+  #   static_configs:
+  #     - targets: ['cadvisor:8080']
+
+# 告警配置 (可选)
+# alerting:
+#   alertmanagers:
+#     - static_configs:
+#         - targets:
+#           - alertmanager:9093
+
+# 远程写入配置 (企业版功能)
+# remote_write:
+#   - url: "https://your-remote-storage/api/v1/write"
+#     basic_auth:
+#       username: "your-username"
+#       password: "your-password"

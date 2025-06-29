@@ -104,6 +104,215 @@ GET    /api/v1/cache/ping                    // 连接性检查
 GET    /api/v1/cache/status                  // 服务状态
 ```
 
+#### 健康检查实现
+```typescript
+// 缓存服务健康检查控制器
+@Controller('health')
+export class CacheHealthController {
+  constructor(
+    private readonly redis: Redis,
+    private readonly prisma: PrismaService,
+    private readonly cacheService: CacheService
+  ) {}
+
+  @Get()
+  async checkHealth(): Promise<HealthCheckResponse> {
+    const startTime = Date.now();
+    
+    const checks = await Promise.allSettled([
+      this.checkRedis(),
+      this.checkDatabase(),
+      this.checkMemory(),
+      this.checkDependencies()
+    ]);
+    
+    const redisStatus = checks[0].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const databaseStatus = checks[1].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const memoryStatus = checks[2].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const dependenciesStatus = checks[3].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    
+    const overallStatus = [redisStatus, databaseStatus, memoryStatus, dependenciesStatus]
+      .every(status => status === 'healthy') ? 'healthy' : 'unhealthy';
+    
+    const responseTime = Date.now() - startTime;
+    
+    return {
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      service: 'cache-service',
+      version: '1.0.0',
+      uptime: process.uptime(),
+      responseTime,
+      checks: {
+        redis: redisStatus,
+        database: databaseStatus,
+        memory: memoryStatus,
+        dependencies: dependenciesStatus
+      },
+      metrics: await this.getHealthMetrics()
+    };
+  }
+
+  @Get('ping')
+  async ping(): Promise<{ status: string; timestamp: string; latency: number }> {
+    const startTime = Date.now();
+    
+    try {
+      await this.redis.ping();
+      const latency = Date.now() - startTime;
+      
+      return {
+        status: 'pong',
+        timestamp: new Date().toISOString(),
+        latency
+      };
+    } catch (error) {
+      throw new ServiceUnavailableException('Redis connection failed');
+    }
+  }
+
+  @Get('status')
+  async getStatus(): Promise<CacheStatusResponse> {
+    const redisInfo = await this.redis.info();
+    const memory = process.memoryUsage();
+    
+    return {
+      service: 'cache-service',
+      status: 'running',
+      timestamp: new Date().toISOString(),
+      redis: {
+        version: redisInfo.redis_version,
+        uptime: parseInt(redisInfo.uptime_in_seconds),
+        connectedClients: parseInt(redisInfo.connected_clients),
+        usedMemory: redisInfo.used_memory_human,
+        totalCommandsProcessed: parseInt(redisInfo.total_commands_processed)
+      },
+      application: {
+        nodeVersion: process.version,
+        pid: process.pid,
+        uptime: process.uptime(),
+        memory: {
+          rss: Math.round(memory.rss / 1024 / 1024),
+          heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+          heapTotal: Math.round(memory.heapTotal / 1024 / 1024)
+        }
+      }
+    };
+  }
+
+  private async checkRedis(): Promise<void> {
+    // 检查Redis连接和基本操作
+    const testKey = 'health:check:' + Date.now();
+    await this.redis.set(testKey, 'test', 'EX', 10);
+    const value = await this.redis.get(testKey);
+    if (value !== 'test') {
+      throw new Error('Redis read/write test failed');
+    }
+    await this.redis.del(testKey);
+  }
+
+  private async checkDatabase(): Promise<void> {
+    // 检查PostgreSQL连接
+    await this.prisma.$queryRaw`SELECT 1`;
+  }
+
+  private async checkMemory(): Promise<void> {
+    const memory = process.memoryUsage();
+    const memoryUsageMB = memory.heapUsed / 1024 / 1024;
+    
+    // 检查内存使用是否超过阈值(200MB警告)
+    if (memoryUsageMB > 200) {
+      throw new Error(`High memory usage: ${Math.round(memoryUsageMB)}MB`);
+    }
+  }
+
+  private async checkDependencies(): Promise<void> {
+    // 检查关键服务依赖
+    const dependencies = [
+      { name: 'auth-service', url: process.env.AUTH_SERVICE_URL },
+      { name: 'monitoring-service', url: process.env.MONITORING_SERVICE_URL }
+    ];
+
+    for (const dep of dependencies) {
+      if (dep.url) {
+        try {
+          const response = await fetch(`${dep.url}/health`, { timeout: 3000 });
+          if (!response.ok) {
+            throw new Error(`${dep.name} health check failed`);
+          }
+        } catch (error) {
+          // 依赖服务不可用时只记录警告，不影响自身健康状态
+          console.warn(`Dependency ${dep.name} is unavailable:`, error.message);
+        }
+      }
+    }
+  }
+
+  private async getHealthMetrics(): Promise<any> {
+    const stats = await this.cacheService.getStatistics();
+    const memory = process.memoryUsage();
+    
+    return {
+      cache: {
+        hitRate: stats.hitRate,
+        totalKeys: stats.totalKeys,
+        memoryUsage: stats.memoryUsageMB,
+        operationsPerSecond: stats.operationsPerSecond
+      },
+      system: {
+        memory: {
+          used: Math.round(memory.heapUsed / 1024 / 1024),
+          total: Math.round(memory.heapTotal / 1024 / 1024),
+          usage: Math.round((memory.heapUsed / memory.heapTotal) * 100)
+        },
+        uptime: process.uptime(),
+        cpu: process.cpuUsage()
+      }
+    };
+  }
+}
+
+// 健康检查响应接口
+interface HealthCheckResponse {
+  status: 'healthy' | 'unhealthy' | 'degraded';
+  timestamp: string;
+  service: string;
+  version: string;
+  uptime: number;
+  responseTime: number;
+  checks: {
+    redis: string;
+    database: string;
+    memory: string;
+    dependencies: string;
+  };
+  metrics: any;
+}
+
+interface CacheStatusResponse {
+  service: string;
+  status: string;
+  timestamp: string;
+  redis: {
+    version: string;
+    uptime: number;
+    connectedClients: number;
+    usedMemory: string;
+    totalCommandsProcessed: number;
+  };
+  application: {
+    nodeVersion: string;
+    pid: number;
+    uptime: number;
+    memory: {
+      rss: number;
+      heapUsed: number;
+      heapTotal: number;
+    };
+  };
+}
+```
+
 ## 🗄️ 数据库设计
 
 ### 缓存配置表 (cache_configs)
@@ -796,8 +1005,8 @@ cache-service:
     - SERVICE_NAME=cache-service
     
     # 数据库配置（共享PostgreSQL实例）
-    - DATABASE_URL=postgresql://platform:platform123@postgres:5432/platform
-    - REDIS_URL=redis://redis:6379
+    - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+    - REDIS_URL=redis://redis:6379/11
     - REDIS_PASSWORD=${REDIS_PASSWORD}
     
     # 内部服务通信
@@ -835,10 +1044,10 @@ cache-service:
   deploy:
     resources:
       limits:
-        memory: 256MB              # 标准版本内存分配
+        memory: 256M
         cpus: '0.5'
       reservations:
-        memory: 128MB
+        memory: 128M
         cpus: '0.25'
         
   restart: unless-stopped
@@ -914,6 +1123,105 @@ networks:
 volumes:
   redis-data:
     driver: local
+```
+
+### 生产环境配置
+
+#### 1. 环境要求
+- **CPU**: 0.25 Core (生产环境)
+- **内存**: 128MB (应用) + 512MB (Redis)
+- **存储**: 10GB (包含Redis持久化数据)
+- **网络**: 千兆网络
+
+#### 2. 高可用配置
+- **Redis单实例**: AOF持久化保障
+- **备份策略**: 定时快照备份
+- **数据恢复**: 快速重启恢复
+
+#### 3. 性能调优
+- **连接池**: 最大100连接
+- **内存优化**: LRU淘汰策略
+- **网络优化**: Keep-alive连接复用
+- **监控优化**: 基础性能监控
+
+#### 4. 标准版本部署清单
+- [ ] 确认Docker Compose配置正确（端口3011，内存256MB+1GB Redis）
+- [ ] 验证Redis单实例配置优化（LRU淘汰，AOF持久化）
+- [ ] 实现12个内部API接口（缓存、会话、权限、监控）
+- [ ] 测试与认证、权限、监控、审计服务的集成
+- [ ] 配置健康检查和Prometheus监控指标
+- [ ] 验证缓存策略和性能（<5ms响应，2000 QPS）
+- [ ] 部署网络配置和服务发现（platform-network）
+- [ ] 配置统一错误处理和重试机制
+
+### 服务间API集成
+
+#### 为其他服务提供的内部API端点
+```typescript
+// 基础缓存操作 - 所有服务调用
+GET    /internal/cache/get/{key}
+POST   /internal/cache/set
+DELETE /internal/cache/delete/{key}
+POST   /internal/cache/mget          // 批量获取
+POST   /internal/cache/mset          // 批量设置
+POST   /internal/cache/exists        // 检查存在
+POST   /internal/cache/expire        // 设置过期
+
+// 会话缓存 - 认证服务调用
+POST   /internal/cache/session/set
+GET    /internal/cache/session/get/{sessionId}
+DELETE /internal/cache/session/delete/{sessionId}
+POST   /internal/cache/session/cleanup
+
+// 权限缓存 - 权限管理服务调用  
+POST   /internal/cache/permission/set
+GET    /internal/cache/permission/get
+DELETE /internal/cache/permission/invalidate
+
+// 缓存统计 - 监控服务调用
+GET    /internal/cache/metrics
+GET    /internal/cache/health
+POST   /internal/cache/collect-stats
+```
+
+#### 调用其他服务的API
+```typescript
+// 认证验证
+POST http://auth-service:3001/internal/auth/verify-token
+
+// 权限检查
+POST http://rbac-service:3002/internal/permissions/check
+
+// 审计记录
+POST http://audit-service:3008/internal/events
+
+// 监控上报
+POST http://monitoring-service:3007/internal/metrics/cache
+```
+
+#### 统一错误处理和重试机制
+```typescript
+// 服务间通信错误格式
+interface CacheServiceError {
+  code: string;           // 'CACHE_UNAVAILABLE', 'KEY_NOT_FOUND'
+  message: string;        // 错误描述
+  service: 'cache-service';
+  timestamp: string;      // ISO时间戳
+  details?: {
+    key?: string;         // 相关缓存键
+    operation?: string;   // 操作类型
+    retryable: boolean;   // 是否可重试
+  };
+}
+
+// 重试配置
+const retryConfig = {
+  retries: 3,
+  retryDelay: 1000,      // 1秒
+  timeout: 5000,         // 5秒超时
+  exponentialBackoff: true,
+  maxRetryDelay: 10000   // 最大重试延迟
+};
 ```
 
 
@@ -1355,102 +1663,6 @@ cache_alerts:
     severity: "warning"
 ```
 
-## 🚀 生产部署指南
-
-### 1. 环境要求
-- **CPU**: 0.25 Core (生产环境)
-- **内存**: 128MB (应用) + 512MB (Redis)
-- **存储**: 10GB (包含Redis持久化数据)
-- **网络**: 千兆网络
-
-### 2. 高可用配置
-- **Redis单实例**: AOF持久化保障
-- **备份策略**: 定时快照备份
-- **数据恢复**: 快速重启恢复
-
-### 3. 性能调优
-- **连接池**: 最大100连接
-- **内存优化**: LRU淘汰策略
-- **网络优化**: Keep-alive连接复用
-- **监控优化**: 基础性能监控
-
-### 4. 标准版本部署清单
-- [ ] 确认Docker Compose配置正确（端口3011，内存256MB+1GB Redis）
-- [ ] 验证Redis单实例配置优化（LRU淘汰，AOF持久化）
-- [ ] 实现12个内部API接口（缓存、会话、权限、监控）
-- [ ] 测试与认证、权限、监控、审计服务的集成
-- [ ] 配置健康检查和Prometheus监控指标
-- [ ] 验证缓存策略和性能（<5ms响应，2000 QPS）
-- [ ] 部署网络配置和服务发现（platform-network）
-- [ ] 配置统一错误处理和重试机制
-
-### 为其他服务提供的内部API端点
-```typescript
-// 基础缓存操作 - 所有服务调用
-GET    /internal/cache/get/{key}
-POST   /internal/cache/set
-DELETE /internal/cache/delete/{key}
-POST   /internal/cache/mget          // 批量获取
-POST   /internal/cache/mset          // 批量设置
-POST   /internal/cache/exists        // 检查存在
-POST   /internal/cache/expire        // 设置过期
-
-// 会话缓存 - 认证服务调用
-POST   /internal/cache/session/set
-GET    /internal/cache/session/get/{sessionId}
-DELETE /internal/cache/session/delete/{sessionId}
-POST   /internal/cache/session/cleanup
-
-// 权限缓存 - 权限管理服务调用  
-POST   /internal/cache/permission/set
-GET    /internal/cache/permission/get
-DELETE /internal/cache/permission/invalidate
-
-// 缓存统计 - 监控服务调用
-GET    /internal/cache/metrics
-GET    /internal/cache/health
-POST   /internal/cache/collect-stats
-```
-
-### 调用其他服务的API
-```typescript
-// 认证验证
-POST http://auth-service:3001/internal/auth/verify-token
-
-// 权限检查
-POST http://rbac-service:3002/internal/permissions/check
-
-// 审计记录
-POST http://audit-service:3008/internal/events
-
-// 监控上报
-POST http://monitoring-service:3007/internal/metrics/cache
-```
-
-### 统一错误处理和重试机制
-```typescript
-// 服务间通信错误格式
-interface CacheServiceError {
-  code: string;           // 'CACHE_UNAVAILABLE', 'KEY_NOT_FOUND'
-  message: string;        // 错误描述
-  service: 'cache-service';
-  timestamp: string;      // ISO时间戳
-  details?: {
-    key?: string;         // 相关缓存键
-    operation?: string;   // 操作类型
-    retryable: boolean;   // 是否可重试
-  };
-}
-
-// 重试配置
-const retryConfig = {
-  retries: 3,
-  retryDelay: 1000,      // 1秒
-  timeout: 5000,         // 5秒超时
-  exponentialBackoff: true,
-  maxRetryDelay: 10000   // 最大重试延迟
-};
-```
 
 ## ✅ 开发完成情况总结
 

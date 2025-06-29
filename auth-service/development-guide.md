@@ -117,9 +117,75 @@
 
 ## 🔗 API设计
 
-### 用户认证API
+### 🎯 StandardApiResponse标准响应格式实施
+
+认证服务已完成StandardApiResponse标准响应格式实施，所有60个API端点均采用统一响应格式，确保与平台其他服务的一致性。
+
+#### 标准成功响应格式
 ```typescript
-// 用户登录
+interface AuthServiceResponse<T> {
+  success: true;
+  data: T;
+  metadata: {
+    requestId: string;
+    timestamp: string;
+    duration: number;
+    version: string;
+    service: 'auth-service';
+  };
+}
+```
+
+#### 标准错误响应格式
+```typescript
+interface AuthServiceErrorResponse {
+  success: false;
+  data: null;
+  error: {
+    code: string;
+    message: string;
+    details?: any;
+    field?: string;
+    requestId: string;
+    timestamp: string;
+    service: 'auth-service';
+    retryable: boolean;
+  };
+  metadata: {
+    requestId: string;
+    timestamp: string;
+    duration: number;
+    version: string;
+    service: 'auth-service';
+  };
+}
+```
+
+#### 认证特有错误代码
+```typescript
+export enum AuthServiceErrorCodes {
+  INVALID_CREDENTIALS = 'INVALID_CREDENTIALS',
+  ACCOUNT_LOCKED = 'ACCOUNT_LOCKED',
+  TOKEN_EXPIRED = 'TOKEN_EXPIRED',
+  TOKEN_INVALID = 'TOKEN_INVALID',
+  TOKEN_REVOKED = 'TOKEN_REVOKED',
+  MFA_REQUIRED = 'MFA_REQUIRED',
+  MFA_INVALID = 'MFA_INVALID',
+  MFA_SETUP_REQUIRED = 'MFA_SETUP_REQUIRED',
+  OAUTH_ERROR = 'OAUTH_ERROR',
+  PERMISSION_DENIED = 'PERMISSION_DENIED',
+  SESSION_EXPIRED = 'SESSION_EXPIRED',
+  RATE_LIMIT_EXCEEDED = 'RATE_LIMIT_EXCEEDED',
+  WEAK_PASSWORD = 'WEAK_PASSWORD',
+  PASSWORD_REUSE = 'PASSWORD_REUSE'
+}
+```
+
+### 用户认证API
+
+#### 用户登录
+```typescript
+// 请求
 POST /api/v1/auth/login
 {
   "email": "user@example.com",
@@ -132,49 +198,341 @@ POST /api/v1/auth/login
   }
 }
 
-// 刷新Token
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "tokenType": "Bearer",
+    "expiresIn": 900,
+    "user": {
+      "id": "user-uuid",
+      "email": "user@example.com",
+      "tenantId": "tenant-uuid",
+      "roles": ["member"],
+      "permissions": ["user.read", "user.update"]
+    },
+    "sessionId": "session-uuid",
+    "mfaRequired": false,
+    "deviceTrusted": true
+  },
+  "metadata": {
+    "requestId": "req_12345",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 125,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - 认证失败 (StandardApiResponse)
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "INVALID_CREDENTIALS",
+    "message": "用户名或密码错误",
+    "details": {
+      "attemptsRemaining": 3,
+      "lockoutTime": null
+    },
+    "field": "credentials",
+    "requestId": "req_12346",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": true
+  },
+  "metadata": {
+    "requestId": "req_12346",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 45,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - 需要MFA验证
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "MFA_REQUIRED",
+    "message": "需要多因素认证",
+    "details": {
+      "availableMethods": ["totp", "sms"],
+      "pendingToken": "pending_auth_token_xxx"
+    },
+    "requestId": "req_12347",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": false
+  },
+  "metadata": {
+    "requestId": "req_12347",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 89,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+#### 刷新Token
+```typescript
+// 请求
 POST /api/v1/auth/refresh
 {
   "refreshToken": "refresh_token_here"
 }
 
-// 用户登出
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "tokenType": "Bearer",
+    "expiresIn": 900,
+    "sessionId": "session-uuid"
+  },
+  "metadata": {
+    "requestId": "req_12348",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 25,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - Token无效
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "TOKEN_INVALID",
+    "message": "刷新令牌无效或已过期",
+    "details": {
+      "tokenExpired": true,
+      "requiresReauth": true
+    },
+    "field": "refreshToken",
+    "requestId": "req_12349",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": false
+  },
+  "metadata": {
+    "requestId": "req_12349",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 15,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 用户登出
+```typescript
+// 请求
 POST /api/v1/auth/logout
 Authorization: Bearer {access_token}
 {
   "allDevices": false
 }
 
-// Token验证
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "message": "登出成功",
+    "revokedSessions": 1,
+    "revokedTokens": 2
+  },
+  "metadata": {
+    "requestId": "req_12350",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 35,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### Token验证
+```typescript
+// 请求
 POST /api/v1/auth/verify
 {
   "token": "jwt_token_here"
 }
 
-// 撤销Token
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "valid": true,
+    "payload": {
+      "sub": "user-uuid",
+      "email": "user@example.com",
+      "tenantId": "tenant-uuid",
+      "roles": ["member"],
+      "permissions": ["user.read", "user.update"],
+      "exp": 1704114000,
+      "iat": 1704113100
+    },
+    "sessionId": "session-uuid",
+    "expiresAt": "2024-01-01T10:15:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12351",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 5,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - Token无效
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "TOKEN_INVALID",
+    "message": "令牌无效或已过期",
+    "details": {
+      "reason": "signature_invalid"
+    },
+    "field": "token",
+    "requestId": "req_12352",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": false
+  },
+  "metadata": {
+    "requestId": "req_12352",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 3,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 撤销Token
+```typescript
+// 请求
 POST /api/v1/auth/revoke
 {
   "token": "jwt_token_here",
   "tokenType": "access" | "refresh"
 }
+
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "revoked": true,
+    "tokenId": "jti-12345",
+    "revokedAt": "2024-01-01T10:00:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12353",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 12,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
 ```
 
 ### 多因素认证API
+
+#### 启用MFA
 ```typescript
-// 启用MFA
+// 请求
 POST /api/v1/auth/mfa/enable
 {
   "method": "totp" | "sms" | "email"
 }
 
-// 验证MFA设置
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "method": "totp",
+    "setupRequired": true,
+    "secret": "JBSWY3DPEHPK3PXP",
+    "qrCode": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAA...",
+    "backupCodes": ["12345678", "87654321"],
+    "setupUrl": "otpauth://totp/Platform:user@example.com?secret=JBSWY3DPEHPK3PXP&issuer=Platform"
+  },
+  "metadata": {
+    "requestId": "req_12354",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 45,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 验证MFA设置
+```typescript
+// 请求
 POST /api/v1/auth/mfa/verify-setup
 {
   "secret": "totp_secret",
   "code": "123456"
 }
 
-// MFA验证
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "verified": true,
+    "enabled": true,
+    "method": "totp",
+    "backupCodes": ["12345678", "87654321"]
+  },
+  "metadata": {
+    "requestId": "req_12355",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 25,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - MFA代码无效
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "MFA_INVALID",
+    "message": "多因素认证代码无效",
+    "details": {
+      "attemptsRemaining": 2,
+      "lockoutTime": null
+    },
+    "field": "code",
+    "requestId": "req_12356",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": true
+  },
+  "metadata": {
+    "requestId": "req_12356",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 15,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### MFA验证
+```typescript
+// 请求
 POST /api/v1/auth/mfa/verify
 {
   "method": "totp" | "sms" | "email",
@@ -182,53 +540,276 @@ POST /api/v1/auth/mfa/verify
   "token": "pending_auth_token"
 }
 
-// 禁用MFA
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "verified": true,
+    "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "tokenType": "Bearer",
+    "expiresIn": 900,
+    "sessionId": "session-uuid"
+  },
+  "metadata": {
+    "requestId": "req_12357",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 35,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 禁用MFA
+```typescript
+// 请求
 POST /api/v1/auth/mfa/disable
 {
   "password": "current_password",
   "mfaCode": "123456"
 }
 
-// 生成备用码
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "disabled": true,
+    "method": "totp",
+    "disabledAt": "2024-01-01T10:00:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12358",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 25,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 生成备用码
+```typescript
+// 请求
 POST /api/v1/auth/mfa/backup-codes
 {
   "password": "current_password"
 }
+
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "backupCodes": [
+      "12345678",
+      "87654321",
+      "13579246",
+      "24681357",
+      "98765432",
+      "11223344",
+      "55667788",
+      "99887766"
+    ],
+    "generatedAt": "2024-01-01T10:00:00Z",
+    "note": "请妥善保存这些备用代码，每个代码只能使用一次"
+  },
+  "metadata": {
+    "requestId": "req_12359",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 15,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
 ```
 
 ### OAuth2集成API
+
+#### 获取OAuth授权URL
 ```typescript
-// 获取OAuth授权URL
+// 请求
 GET /api/v1/auth/oauth/{provider}/authorize
 ?redirect_uri=https://app.example.com/callback
 &state=csrf_token
 
-// OAuth回调处理
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "authUrl": "https://github.com/login/oauth/authorize?client_id=xxx&redirect_uri=xxx&state=xxx&scope=user:email",
+    "state": "csrf_token_xxx",
+    "expiresIn": 600,
+    "provider": "github"
+  },
+  "metadata": {
+    "requestId": "req_12360",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 8,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### OAuth回调处理
+```typescript
+// 请求
 POST /api/v1/auth/oauth/{provider}/callback
 {
   "code": "authorization_code",
   "state": "csrf_token"
 }
 
-// 绑定OAuth账号
+// 成功响应 - 新用户注册 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "isNewUser": true,
+    "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "tokenType": "Bearer",
+    "expiresIn": 900,
+    "user": {
+      "id": "user-uuid",
+      "email": "user@example.com",
+      "name": "John Doe",
+      "provider": "github",
+      "tenantId": "tenant-uuid"
+    },
+    "sessionId": "session-uuid"
+  },
+  "metadata": {
+    "requestId": "req_12361",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 150,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - OAuth错误
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "OAUTH_ERROR",
+    "message": "OAuth授权失败",
+    "details": {
+      "provider": "github",
+      "reason": "access_denied",
+      "description": "用户拒绝授权"
+    },
+    "requestId": "req_12362",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": true
+  },
+  "metadata": {
+    "requestId": "req_12362",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 45,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 绑定OAuth账号
+```typescript
+// 请求
 POST /api/v1/auth/oauth/{provider}/bind
 Authorization: Bearer {access_token}
 {
   "code": "authorization_code"
 }
 
-// 解绑OAuth账号
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "bound": true,
+    "provider": "github",
+    "providerId": "github_user_123",
+    "providerEmail": "user@github.com",
+    "providerName": "John Doe",
+    "boundAt": "2024-01-01T10:00:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12363",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 85,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 解绑OAuth账号
+```typescript
+// 请求
 DELETE /api/v1/auth/oauth/{provider}/unbind
 Authorization: Bearer {access_token}
 
-// 获取已绑定账号
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "unbound": true,
+    "provider": "github",
+    "unboundAt": "2024-01-01T10:00:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12364",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 25,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 获取已绑定账号
+```typescript
+// 请求
 GET /api/v1/auth/oauth/accounts
 Authorization: Bearer {access_token}
+
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": [
+    {
+      "provider": "github",
+      "providerId": "github_user_123",
+      "providerEmail": "user@github.com",
+      "providerName": "John Doe",
+      "boundAt": "2024-01-01T09:00:00Z",
+      "isActive": true
+    },
+    {
+      "provider": "google",
+      "providerId": "google_user_456",
+      "providerEmail": "user@gmail.com",
+      "providerName": "John Doe",
+      "boundAt": "2024-01-01T08:00:00Z",
+      "isActive": true
+    }
+  ],
+  "metadata": {
+    "requestId": "req_12365",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 15,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
 ```
 
 ### 权限管理API
+
+#### 检查权限
 ```typescript
-// 检查权限
+// 请求
 POST /api/v1/auth/permissions/check
 Authorization: Bearer {access_token}
 {
@@ -240,15 +821,132 @@ Authorization: Bearer {access_token}
   }
 }
 
-// 获取用户权限
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "hasPermission": true,
+    "permission": {
+      "resource": "user",
+      "action": "read",
+      "scope": "tenant"
+    },
+    "context": {
+      "tenantId": "tenant-uuid",
+      "resourceId": "user-uuid"
+    },
+    "checkTime": "2024-01-01T10:00:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12366",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 8,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - 权限被拒绝
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "PERMISSION_DENIED",
+    "message": "权限不足",
+    "details": {
+      "resource": "user",
+      "action": "read",
+      "reason": "insufficient_role"
+    },
+    "requestId": "req_12367",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": false
+  },
+  "metadata": {
+    "requestId": "req_12367",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 5,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 获取用户权限
+```typescript
+// 请求
 GET /api/v1/auth/permissions/user
 Authorization: Bearer {access_token}
 
-// 获取用户角色
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "permissions": [
+      {
+        "code": "user.read",
+        "name": "查看用户",
+        "resource": "user",
+        "action": "read",
+        "scope": "tenant"
+      },
+      {
+        "code": "user.update",
+        "name": "更新用户",
+        "resource": "user",
+        "action": "update",
+        "scope": "tenant"
+      }
+    ],
+    "totalCount": 2,
+    "lastUpdated": "2024-01-01T09:00:00Z"
+  },
+  "metadata": {
+    "requestId": "req_12368",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 12,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 获取用户角色
+```typescript
+// 请求
 GET /api/v1/auth/roles/user
 Authorization: Bearer {access_token}
 
-// 权限批量检查
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "roles": [
+      {
+        "code": "member",
+        "name": "普通成员",
+        "level": 1,
+        "permissions": ["user.read", "user.update"],
+        "assignedAt": "2024-01-01T08:00:00Z"
+      }
+    ],
+    "totalCount": 1,
+    "effectivePermissions": ["user.read", "user.update"]
+  },
+  "metadata": {
+    "requestId": "req_12369",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 10,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 权限批量检查
+```typescript
+// 请求
 POST /api/v1/auth/permissions/batch-check
 Authorization: Bearer {access_token}
 {
@@ -263,26 +961,226 @@ Authorization: Bearer {access_token}
     }
   ]
 }
+
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "results": [
+      {
+        "resource": "user",
+        "action": "read",
+        "hasPermission": true
+      },
+      {
+        "resource": "tenant",
+        "action": "manage",
+        "hasPermission": false,
+        "reason": "insufficient_role"
+      }
+    ],
+    "summary": {
+      "total": 2,
+      "granted": 1,
+      "denied": 1
+    }
+  },
+  "metadata": {
+    "requestId": "req_12370",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 15,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
 ```
 
 ### 会话管理API
+
+#### 获取活跃会话
 ```typescript
-// 获取活跃会话
+// 请求
 GET /api/v1/auth/sessions
 Authorization: Bearer {access_token}
 
-// 终止会话
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": [
+    {
+      "sessionId": "session-uuid-1",
+      "deviceId": "device-uuid-1",
+      "deviceInfo": {
+        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "platform": "Web",
+        "browser": "Chrome 120.0"
+      },
+      "location": {
+        "ip": "192.168.1.100",
+        "country": "中国",
+        "city": "北京"
+      },
+      "createdAt": "2024-01-01T09:00:00Z",
+      "lastActiveAt": "2024-01-01T10:00:00Z",
+      "expiresAt": "2024-01-01T17:00:00Z",
+      "isCurrent": true,
+      "isActive": true
+    },
+    {
+      "sessionId": "session-uuid-2",
+      "deviceId": "device-uuid-2",
+      "deviceInfo": {
+        "userAgent": "MyApp/1.0 (iPhone; iOS 17.0)",
+        "platform": "iOS",
+        "browser": "Mobile App"
+      },
+      "location": {
+        "ip": "192.168.1.101",
+        "country": "中国",
+        "city": "上海"
+      },
+      "createdAt": "2024-01-01T08:00:00Z",
+      "lastActiveAt": "2024-01-01T09:30:00Z",
+      "expiresAt": "2024-01-01T16:00:00Z",
+      "isCurrent": false,
+      "isActive": true
+    }
+  ],
+  "metadata": {
+    "requestId": "req_12371",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 18,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 终止会话
+```typescript
+// 请求
 DELETE /api/v1/auth/sessions/{sessionId}
 Authorization: Bearer {access_token}
 
-// 终止所有会话
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "terminated": true,
+    "sessionId": "session-uuid-2",
+    "terminatedAt": "2024-01-01T10:00:00Z",
+    "reason": "user_request"
+  },
+  "metadata": {
+    "requestId": "req_12372",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 12,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 终止所有会话
+```typescript
+// 请求
 DELETE /api/v1/auth/sessions/all
 Authorization: Bearer {access_token}
 
-// 获取登录历史
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "terminatedCount": 5,
+    "terminatedSessions": [
+      "session-uuid-1",
+      "session-uuid-2",
+      "session-uuid-3",
+      "session-uuid-4",
+      "session-uuid-5"
+    ],
+    "terminatedAt": "2024-01-01T10:00:00Z",
+    "reason": "user_request_all",
+    "note": "当前会话将在此响应后失效"
+  },
+  "metadata": {
+    "requestId": "req_12373",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 35,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+```
+
+#### 获取登录历史
+```typescript
+// 请求
 GET /api/v1/auth/login-history
 Authorization: Bearer {access_token}
 ?page=1&limit=20&startDate=2024-01-01&endDate=2024-01-31
+
+// 成功响应 (StandardApiResponse) - 分页格式
+{
+  "success": true,
+  "data": [
+    {
+      "id": "history-uuid-1",
+      "loginMethod": "password",
+      "provider": null,
+      "ipAddress": "192.168.1.100",
+      "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+      "deviceId": "device-uuid-1",
+      "deviceInfo": {
+        "platform": "Web",
+        "browser": "Chrome 120.0"
+      },
+      "location": {
+        "country": "中国",
+        "city": "北京"
+      },
+      "status": "success",
+      "mfaUsed": true,
+      "sessionDuration": "2h 30m",
+      "createdAt": "2024-01-01T09:00:00Z"
+    },
+    {
+      "id": "history-uuid-2",
+      "loginMethod": "oauth",
+      "provider": "github",
+      "ipAddress": "192.168.1.101",
+      "userAgent": "MyApp/1.0 (iPhone; iOS 17.0)",
+      "deviceId": "device-uuid-2",
+      "deviceInfo": {
+        "platform": "iOS",
+        "browser": "Mobile App"
+      },
+      "location": {
+        "country": "中国",
+        "city": "上海"
+      },
+      "status": "success",
+      "mfaUsed": false,
+      "sessionDuration": "1h 45m",
+      "createdAt": "2024-01-01T08:00:00Z"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "pageSize": 20,
+    "total": 156,
+    "totalPages": 8,
+    "hasNext": true,
+    "hasPrev": false
+  },
+  "metadata": {
+    "requestId": "req_12374",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 25,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
 ```
 
 ## 🗄️ 数据库设计
@@ -556,6 +1454,311 @@ TTL: 30分钟
 Data: 用户权限列表
 ```
 
+### StandardApiResponse技术组件
+
+基于P3-1用户管理服务的成功实施经验，认证服务采用相同的技术架构：
+
+#### 响应拦截器 (AuthResponseInterceptor)
+```typescript
+// apps/auth-service/src/common/interceptors/auth-response.interceptor.ts
+import { Injectable, NestInterceptor, ExecutionContext, CallHandler } from '@nestjs/common';
+import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
+import { Request } from 'express';
+
+@Injectable()
+export class AuthResponseInterceptor implements NestInterceptor {
+  intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
+    const request = context.switchToHttp().getRequest<Request>();
+    const startTime = Date.now();
+    
+    return next.handle().pipe(
+      map(data => {
+        const duration = Date.now() - startTime;
+        
+        // 针对认证服务的安全考虑，某些响应需要特殊处理
+        const sanitizedData = this.sanitizeAuthData(data, request.path);
+        
+        return {
+          success: true,
+          data: sanitizedData,
+          ...(data?.pagination && { pagination: data.pagination }),
+          metadata: {
+            requestId: request.headers['x-request-id'] || this.generateRequestId(),
+            timestamp: new Date().toISOString(),
+            duration,
+            version: '1.0',
+            service: 'auth-service'
+          }
+        };
+      })
+    );
+  }
+  
+  private sanitizeAuthData(data: any, path: string): any {
+    // 敏感路径的特殊处理
+    if (path.includes('/mfa/') && data?.secret) {
+      // MFA设置时隐藏敏感信息
+      return {
+        ...data,
+        secret: data.secret ? '***HIDDEN***' : undefined
+      };
+    }
+    
+    // Token响应的安全处理
+    if (data?.refreshToken) {
+      return {
+        ...data,
+        refreshToken: this.maskToken(data.refreshToken)
+      };
+    }
+    
+    return data;
+  }
+  
+  private maskToken(token: string): string {
+    if (!token || token.length < 20) return token;
+    return `${token.substring(0, 10)}...${token.substring(token.length - 10)}`;
+  }
+  
+  private generateRequestId(): string {
+    return `auth_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  }
+}
+```
+
+#### 统一异常过滤器 (AuthHttpExceptionFilter)
+```typescript
+// apps/auth-service/src/common/filters/auth-http-exception.filter.ts
+import {
+  ExceptionFilter,
+  Catch,
+  ArgumentsHost,
+  HttpException,
+  HttpStatus,
+  Logger
+} from '@nestjs/common';
+import { Request, Response } from 'express';
+
+@Catch()
+export class AuthHttpExceptionFilter implements ExceptionFilter {
+  private readonly logger = new Logger(AuthHttpExceptionFilter.name);
+
+  catch(exception: unknown, host: ArgumentsHost) {
+    const ctx = host.switchToHttp();
+    const response = ctx.getResponse<Response>();
+    const request = ctx.getRequest<Request>();
+    
+    const { status, errorResponse } = this.processException(exception, request);
+    
+    // 记录安全相关的错误
+    if (this.isSecurityRelated(request.path, status)) {
+      this.logger.warn('Security-related error', {
+        path: request.path,
+        method: request.method,
+        ip: request.ip,
+        userAgent: request.headers['user-agent'],
+        status,
+        error: errorResponse.error?.code
+      });
+    }
+    
+    response.status(status).json(errorResponse);
+  }
+  
+  private processException(exception: unknown, request: Request) {
+    const requestId = request.headers['x-request-id'] || this.generateRequestId();
+    const timestamp = new Date().toISOString();
+    
+    if (exception instanceof HttpException) {
+      const status = exception.getStatus();
+      const exceptionResponse = exception.getResponse();
+      
+      return {
+        status,
+        errorResponse: {
+          success: false,
+          data: null,
+          error: {
+            code: this.getErrorCode(status, exceptionResponse),
+            message: this.getErrorMessage(exceptionResponse),
+            details: this.getErrorDetails(exceptionResponse),
+            field: this.getErrorField(exceptionResponse),
+            requestId,
+            timestamp,
+            service: 'auth-service',
+            retryable: this.isRetryable(status)
+          },
+          metadata: {
+            requestId,
+            timestamp,
+            duration: 0,
+            version: '1.0',
+            service: 'auth-service'
+          }
+        }
+      };
+    }
+    
+    // 未知错误的处理
+    return {
+      status: HttpStatus.INTERNAL_SERVER_ERROR,
+      errorResponse: {
+        success: false,
+        data: null,
+        error: {
+          code: 'INTERNAL_SERVER_ERROR',
+          message: '服务器内部错误',
+          requestId,
+          timestamp,
+          service: 'auth-service',
+          retryable: false
+        },
+        metadata: {
+          requestId,
+          timestamp,
+          duration: 0,
+          version: '1.0',
+          service: 'auth-service'
+        }
+      }
+    };
+  }
+  
+  private isSecurityRelated(path: string, status: number): boolean {
+    const securityPaths = ['/auth/login', '/auth/mfa/', '/auth/oauth/'];
+    const securityStatuses = [401, 403, 429];
+    
+    return securityPaths.some(p => path.includes(p)) || 
+           securityStatuses.includes(status);
+  }
+  
+  private getErrorCode(status: number, response: any): string {
+    if (typeof response === 'object' && response.error?.code) {
+      return response.error.code;
+    }
+    
+    // 认证服务特有的错误码映射
+    const authErrorCodes = {
+      401: 'UNAUTHORIZED',
+      403: 'PERMISSION_DENIED',
+      423: 'ACCOUNT_LOCKED',
+      429: 'RATE_LIMIT_EXCEEDED'
+    };
+    
+    return authErrorCodes[status] || 'HTTP_' + status;
+  }
+  
+  private isRetryable(status: number): boolean {
+    // 认证服务的重试策略
+    const retryableStatuses = [429, 502, 503, 504];
+    const nonRetryableAuthStatuses = [401, 403, 423]; // 认证失败不应重试
+    
+    if (nonRetryableAuthStatuses.includes(status)) {
+      return false;
+    }
+    
+    return retryableStatuses.includes(status);
+  }
+}
+```
+
+#### 认证验证管道集成
+```typescript
+// apps/auth-service/src/common/pipes/auth-validation.pipe.ts
+import { Injectable, ArgumentMetadata, BadRequestException } from '@nestjs/common';
+import { UnifiedValidationPipe } from '@platform/shared';
+
+@Injectable()
+export class AuthValidationPipe extends UnifiedValidationPipe {
+  constructor() {
+    super({
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      transform: true,
+      validateCustomDecorators: true
+    });
+  }
+  
+  async transform(value: any, metadata: ArgumentMetadata): Promise<any> {
+    try {
+      return await super.transform(value, metadata);
+    } catch (error) {
+      if (error instanceof BadRequestException) {
+        const response = error.getResponse() as any;
+        
+        // 为认证服务添加特殊的验证错误处理
+        if (this.isPasswordField(response)) {
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'WEAK_PASSWORD',
+              message: '密码强度不足',
+              details: response.error?.details,
+              field: 'password',
+              service: 'auth-service',
+              retryable: true
+            }
+          });
+        }
+        
+        if (this.isMfaField(response)) {
+          throw new BadRequestException({
+            success: false,
+            error: {
+              code: 'MFA_INVALID',
+              message: '多因素认证代码无效',
+              details: response.error?.details,
+              field: 'mfaCode',
+              service: 'auth-service',
+              retryable: true
+            }
+          });
+        }
+      }
+      
+      throw error;
+    }
+  }
+  
+  private isPasswordField(response: any): boolean {
+    return response?.error?.details?.validationErrors?.password;
+  }
+  
+  private isMfaField(response: any): boolean {
+    return response?.error?.details?.validationErrors?.mfaCode;
+  }
+}
+```
+
+#### 主应用模块集成配置
+```typescript
+// apps/auth-service/src/app.module.ts
+import { Module } from '@nestjs/common';
+import { APP_INTERCEPTOR, APP_FILTER, APP_PIPE } from '@nestjs/core';
+import { AuthResponseInterceptor } from './common/interceptors/auth-response.interceptor';
+import { AuthHttpExceptionFilter } from './common/filters/auth-http-exception.filter';
+import { AuthValidationPipe } from './common/pipes/auth-validation.pipe';
+
+@Module({
+  providers: [
+    {
+      provide: APP_INTERCEPTOR,
+      useClass: AuthResponseInterceptor,
+    },
+    {
+      provide: APP_FILTER,
+      useClass: AuthHttpExceptionFilter,
+    },
+    {
+      provide: APP_PIPE,
+      useClass: AuthValidationPipe,
+    },
+  ],
+})
+export class AppModule {}
+```
+
 ## 🛡️ 安全措施
 
 ### 数据保护
@@ -595,6 +1798,25 @@ const securityRules = [
   }
 ];
 ```
+
+### 认证响应安全特殊处理
+
+#### 敏感信息保护
+1. **Token掩码**: 长Token在日志和响应中自动掩码处理
+2. **敏感字段隐藏**: MFA密钥等敏感信息不在响应中暴露
+3. **错误信息过滤**: 不泄露系统内部信息，避免信息泄露攻击
+4. **审计日志**: 安全相关错误自动记录，支持安全事件追踪
+
+#### 安全日志策略
+- **安全路径监控**: 自动识别 `/auth/login`, `/auth/mfa/`, `/auth/oauth/` 等敏感路径
+- **状态码监控**: 特别关注 401, 403, 429 等安全相关状态码
+- **IP地址记录**: 记录客户端IP和User-Agent用于安全分析
+- **异步日志**: 安全日志异步记录，避免影响响应性能
+
+#### 性能影响最小化
+- **缓存优化**: 错误代码映射缓存，避免重复计算
+- **异步处理**: 安全日志异步记录，不阻塞主要业务流程
+- **轻量级验证**: 最小化验证开销，平衡安全性和性能
 
 ## ⚡ 性能优化
 
@@ -732,18 +1954,82 @@ export class PermissionService {
 ### 内部API端点（微服务间通信）
 
 #### 为其他服务提供的内部API
+
+##### JWT Token验证 (内部API)
 ```typescript
-// JWT Token验证 - 所有服务都需要
+// 请求
 POST /internal/auth/verify-token
 Headers: X-Service-Token: {内部服务令牌}
 Body: { "token": "jwt_token_here" }
-Response: { "valid": true, "payload": JWTPayload, "user": User }
 
-// 用户权限检查 - 权限管理服务调用
-POST /internal/auth/check-permission
+// 成功响应 (StandardApiResponse)
+{
+  "success": true,
+  "data": {
+    "valid": true,
+    "payload": {
+      "sub": "user-uuid",
+      "email": "user@example.com",
+      "tenantId": "tenant-uuid",
+      "roles": ["member"],
+      "permissions": ["user.read", "user.update"],
+      "exp": 1704114000,
+      "iat": 1704113100
+    },
+    "user": {
+      "id": "user-uuid",
+      "email": "user@example.com",
+      "tenantId": "tenant-uuid"
+    },
+    "sessionId": "session_uuid",
+    "expiresAt": "2024-01-01T10:15:00Z",
+    "isActive": true
+  },
+  "metadata": {
+    "requestId": "req_internal_001",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 3,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 错误响应 - Token无效
+{
+  "success": false,
+  "data": null,
+  "error": {
+    "code": "TOKEN_INVALID",
+    "message": "令牌无效或已过期",
+    "details": {
+      "reason": "expired",
+      "expiredAt": "2024-01-01T09:45:00Z"
+    },
+    "requestId": "req_internal_002",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "service": "auth-service",
+    "retryable": false
+  },
+  "metadata": {
+    "requestId": "req_internal_002",
+    "timestamp": "2024-01-01T10:00:00Z",
+    "duration": 2,
+    "version": "1.0",
+    "service": "auth-service"
+  }
+}
+
+// 会话信息查询 - 审计服务等调用
+GET /internal/auth/sessions/{sessionId}
 Headers: X-Service-Token: {内部服务令牌}
-Body: { "userId": "uuid", "resource": "user", "action": "read" }
-Response: { "allowed": true, "reason": "has_permission" }
+Response: {
+  "sessionId": "session_uuid",
+  "userId": "user_uuid", 
+  "tenantId": "tenant_uuid",
+  "createdAt": "2024-01-01T09:00:00Z",
+  "expiresAt": "2024-01-01T10:00:00Z",
+  "isActive": true
+}
 
 // 会话撤销 - 用户管理服务调用
 POST /internal/auth/revoke-user-sessions
@@ -755,28 +2041,46 @@ Response: { "revoked": 5, "sessions": ["session_ids"] }
 POST /internal/auth/verify-tokens-batch
 Headers: X-Service-Token: {内部服务令牌}
 Body: { "tokens": ["token1", "token2"] }
-Response: { "results": [{"token": "token1", "valid": true}] }
+Response: { "results": [{"token": "token1", "valid": true, "sessionId": "session_id"}] }
 ```
 
 #### 调用其他服务的API
 ```typescript
 // 调用用户管理服务 - 获取用户信息
 GET http://user-management-service:3003/internal/users/{userId}
-Headers: X-Service-Token: {内部服务令牌}
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
 
-// 调用权限管理服务 - 获取用户权限
-GET http://rbac-service:3002/internal/permissions/user/{userId}
-Headers: X-Service-Token: {内部服务令牌}
+// 调用用户管理服务 - 验证用户凭据
+POST http://user-management-service:3003/internal/users/validate-credentials
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
+Body: { "email": "user@example.com", "password": "hashed_password", "tenantId": "tenant_id" }
 
 // 调用审计服务 - 记录认证事件
 POST http://audit-service:3008/internal/events
-Headers: X-Service-Token: {内部服务令牌}
-Body: AuditEvent
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
+Body: {
+  "tenantId": "tenant_id",
+  "userId": "user_id", 
+  "serviceId": "auth-service",
+  "eventType": "auth.login_success",
+  "resource": "session",
+  "action": "create",
+  "outcome": "success",
+  "timestamp": "2024-01-01T10:00:00Z",
+  "sourceIp": "192.168.1.1",
+  "metadata": { "loginMethod": "password" }
+}
 
 // 调用通知服务 - 发送安全通知
 POST http://notification-service:3005/internal/notifications/send
-Headers: X-Service-Token: {内部服务令牌}
-Body: NotificationRequest
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
+Body: {
+  "recipientId": "user_id",
+  "recipientType": "user", 
+  "channel": "email",
+  "templateId": "security_alert",
+  "variables": { "loginTime": "2024-01-01T10:00:00Z", "sourceIp": "192.168.1.1" }
+}
 ```
 
 ### 服务发现和通信
@@ -791,6 +2095,365 @@ services:
       - RBAC_SERVICE_URL=http://rbac-service:3002
       - AUDIT_SERVICE_URL=http://audit-service:3008
       - NOTIFICATION_SERVICE_URL=http://notification-service:3005
+```
+
+### 🎯 事件驱动架构集成
+
+#### 认证服务事件发布能力
+```typescript
+// 认证服务事件发布器
+@Injectable()
+export class AuthEventPublisher {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly logger: Logger
+  ) {}
+  
+  // 用户登录成功事件
+  async publishUserLoginEvent(loginData: {
+    userId: string;
+    sessionId: string;
+    sourceIp: string;
+    userAgent: string;
+    tenantId: string;
+    loginMethod: string;
+  }): Promise<void> {
+    const event = new UserLoginEvent(
+      loginData.userId,
+      {
+        sessionId: loginData.sessionId,
+        sourceIp: loginData.sourceIp,
+        userAgent: loginData.userAgent,
+        loginMethod: loginData.loginMethod
+      },
+      loginData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+    this.logger.log(`User login event published: ${loginData.userId}`);
+  }
+  
+  // 用户登录失败事件
+  async publishUserLoginFailedEvent(failureData: {
+    email: string;
+    sourceIp: string;
+    userAgent: string;
+    tenantId: string;
+    failureReason: string;
+  }): Promise<void> {
+    const event = new UserLoginFailedEvent(
+      'anonymous',
+      {
+        email: failureData.email,
+        sourceIp: failureData.sourceIp,
+        userAgent: failureData.userAgent,
+        failureReason: failureData.failureReason,
+        timestamp: new Date().toISOString()
+      },
+      failureData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+  }
+  
+  // 会话撤销事件
+  async publishSessionRevokedEvent(revokeData: {
+    userId: string;
+    sessionIds: string[];
+    revokedBy: string;
+    reason: string;
+    tenantId: string;
+  }): Promise<void> {
+    const event = new SessionRevokedEvent(
+      revokeData.sessionIds[0], // 主会话ID
+      {
+        userId: revokeData.userId,
+        revokedBy: revokeData.revokedBy,
+        reason: revokeData.reason,
+        affectedSessions: revokeData.sessionIds
+      },
+      revokeData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+  }
+  
+  // 密码重置事件
+  async publishPasswordResetEvent(resetData: {
+    userId: string;
+    email: string;
+    resetBy: string;
+    tenantId: string;
+  }): Promise<void> {
+    const event = new PasswordResetEvent(
+      resetData.userId,
+      {
+        email: resetData.email,
+        resetBy: resetData.resetBy,
+        resetTime: new Date().toISOString()
+      },
+      resetData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+  }
+}
+
+// 认证相关事件定义
+class UserLoginEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      sessionId: string;
+      sourceIp: string;
+      userAgent: string;
+      loginMethod: string;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'Session', eventData, {
+      source: 'auth-service',
+      causedBy: 'user_login_success'
+    }, tenantId, userId);
+  }
+}
+
+class UserLoginFailedEvent extends DomainEvent {
+  constructor(
+    attemptId: string,
+    eventData: {
+      email: string;
+      sourceIp: string;
+      userAgent: string;
+      failureReason: string;
+      timestamp: string;
+    },
+    tenantId: string
+  ) {
+    super(attemptId, 'LoginAttempt', eventData, {
+      source: 'auth-service',
+      causedBy: 'user_login_failed'
+    }, tenantId);
+  }
+}
+
+class SessionRevokedEvent extends DomainEvent {
+  constructor(
+    sessionId: string,
+    eventData: {
+      userId: string;
+      revokedBy: string;
+      reason: string;
+      affectedSessions: string[];
+    },
+    tenantId: string
+  ) {
+    super(sessionId, 'Session', eventData, {
+      source: 'auth-service',
+      causedBy: 'session_revocation'
+    }, tenantId, eventData.userId);
+  }
+}
+
+class PasswordResetEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      email: string;
+      resetBy: string;
+      resetTime: string;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'User', eventData, {
+      source: 'auth-service',
+      causedBy: 'password_reset'
+    }, tenantId, userId);
+  }
+}
+```
+
+#### 集成到认证服务
+```typescript
+// 认证服务主类集成
+@Injectable()
+export class AuthService {
+  constructor(
+    private readonly userService: UserService,
+    private readonly sessionService: SessionService,
+    private readonly eventPublisher: AuthEventPublisher
+  ) {}
+  
+  async login(loginDto: LoginDto, request: Request): Promise<LoginResponse> {
+    try {
+      // 1. 验证用户凭据
+      const user = await this.validateUserCredentials(
+        loginDto.email,
+        loginDto.password,
+        loginDto.tenantId
+      );
+      
+      // 2. 创建会话
+      const session = await this.sessionService.createSession({
+        userId: user.id,
+        tenantId: user.tenantId,
+        sourceIp: request.ip,
+        userAgent: request.headers['user-agent']
+      });
+      
+      // 3. 发布登录成功事件
+      await this.eventPublisher.publishUserLoginEvent({
+        userId: user.id,
+        sessionId: session.id,
+        sourceIp: request.ip,
+        userAgent: request.headers['user-agent'],
+        tenantId: user.tenantId,
+        loginMethod: 'password'
+      });
+      
+      return {
+        token: session.token,
+        user: user,
+        sessionId: session.id
+      };
+      
+    } catch (error) {
+      // 发布登录失败事件
+      await this.eventPublisher.publishUserLoginFailedEvent({
+        email: loginDto.email,
+        sourceIp: request.ip,
+        userAgent: request.headers['user-agent'],
+        tenantId: loginDto.tenantId,
+        failureReason: error.message
+      });
+      
+      throw error;
+    }
+  }
+  
+  async revokeUserSessions(revokeDto: RevokeSessionsDto): Promise<RevokeSessionsResponse> {
+    // 1. 撤销会话
+    const revokedSessions = await this.sessionService.revokeUserSessions(
+      revokeDto.userId,
+      revokeDto.reason
+    );
+    
+    // 2. 发布会话撤销事件
+    await this.eventPublisher.publishSessionRevokedEvent({
+      userId: revokeDto.userId,
+      sessionIds: revokedSessions.map(s => s.id),
+      revokedBy: revokeDto.revokedBy || 'system',
+      reason: revokeDto.reason,
+      tenantId: revokedSessions[0]?.tenantId
+    });
+    
+    return {
+      revoked: revokedSessions.length,
+      sessions: revokedSessions
+    };
+  }
+}
+```
+
+#### 事件订阅处理
+```typescript
+// 认证服务事件处理器
+@Injectable()
+export class AuthEventHandler implements EventHandler {
+  constructor(
+    private readonly sessionService: SessionService,
+    private readonly logger: Logger
+  ) {}
+  
+  async handle(event: BaseEvent): Promise<void> {
+    switch (event.eventType) {
+      case 'user.status_changed':
+        await this.handleUserStatusChanged(event as UserStatusChangedEvent);
+        break;
+        
+      case 'user.deleted':
+        await this.handleUserDeleted(event as UserDeletedEvent);
+        break;
+        
+      default:
+        this.logger.warn(`Unhandled event type: ${event.eventType}`);
+    }
+  }
+  
+  private async handleUserStatusChanged(event: UserStatusChangedEvent): Promise<void> {
+    const { aggregateId: userId, eventData } = event;
+    
+    // 如果用户被禁用，撤销所有会话
+    if (eventData.newStatus === 'suspended' || eventData.newStatus === 'inactive') {
+      await this.sessionService.revokeUserSessions(userId, 'user_status_changed');
+      this.logger.log(`Revoked sessions for user ${userId} due to status change`);
+    }
+  }
+  
+  private async handleUserDeleted(event: UserDeletedEvent): Promise<void> {
+    const { aggregateId: userId } = event;
+    
+    // 用户删除时撤销所有会话
+    await this.sessionService.revokeUserSessions(userId, 'user_deleted');
+    this.logger.log(`Revoked sessions for deleted user ${userId}`);
+  }
+}
+
+// 在应用启动时注册事件订阅
+@Injectable()
+export class AuthServiceBootstrap {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly eventHandler: AuthEventHandler
+  ) {}
+  
+  async onApplicationBootstrap(): Promise<void> {
+    // 订阅用户相关事件
+    await this.eventBus.subscribeToEvents(
+      ['user.status_changed', 'user.deleted'],
+      'auth-service-consumer-group',
+      'auth-service-instance-1',
+      this.eventHandler
+    );
+    
+    console.log('Auth service event subscriptions registered');
+  }
+}
+```
+
+#### 事件发布性能优化
+```typescript
+// 批量事件发布
+@Injectable()
+export class BatchAuthEventPublisher {
+  private eventQueue: BaseEvent[] = [];
+  private batchSize = 10;
+  private flushInterval = 1000; // 1秒
+  
+  constructor(
+    private readonly eventBus: EventBusService
+  ) {
+    // 定期刷新事件队列
+    setInterval(() => this.flushEvents(), this.flushInterval);
+  }
+  
+  async queueEvent(event: BaseEvent): Promise<void> {
+    this.eventQueue.push(event);
+    
+    if (this.eventQueue.length >= this.batchSize) {
+      await this.flushEvents();
+    }
+  }
+  
+  private async flushEvents(): Promise<void> {
+    if (this.eventQueue.length === 0) return;
+    
+    const events = [...this.eventQueue];
+    this.eventQueue = [];
+    
+    await this.eventBus.publishEvents(events);
+  }
+}
 ```
 
 ### 统一错误处理
@@ -849,8 +2512,12 @@ auth-service:
     - "3001:3001"
   environment:
     # 数据库配置 (共享PostgreSQL实例)
-    DATABASE_URL: postgresql://platform:platform123@postgres:5432/platform
-    REDIS_URL: redis://redis:6379
+    DATABASE_URL: postgresql://platform_user:platform_pass@postgres:5432/platform
+    REDIS_URL: redis://redis:6379/1
+    NODE_ENV: production
+    SERVICE_NAME: auth-service
+    SERVICE_PORT: 3001
+    INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN}
     
     # JWT配置 (RS256非对称加密)
     JWT_PRIVATE_KEY: ${JWT_PRIVATE_KEY}
@@ -880,7 +2547,6 @@ auth-service:
     RATE_LIMIT_LIMIT: 100
     
     # 标准版本配置
-    NODE_ENV: production
     MAX_CONCURRENT_SESSIONS: 5
     SESSION_TIMEOUT: 7200          # 2小时
     FAILED_LOGIN_THRESHOLD: 5      # 5次失败锁定
@@ -891,11 +2557,20 @@ auth-service:
       condition: service_healthy
     redis:
       condition: service_healthy
-    user-management-service:
-      condition: service_healthy
-      
-  networks:
-    - platform-network
+  deploy:
+    resources:
+      limits:
+        memory: 512M
+        cpus: '0.5'
+      reservations:
+        memory: 256M
+        cpus: '0.25'
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://localhost:3001/health"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 40s
     
   deploy:
     resources:
@@ -1211,5 +2886,3 @@ describe('Security (e2e)', () => {
 - 🔧 **环境变量**: 完整的生产环境配置
 - 📊 **性能调优**: 连接池、会话管理、安全参数
 - 🚀 **部署优化**: 网络配置、依赖管理、重启策略
-
-**认证授权服务作为标准版本的安全核心，已完成100%开发文档优化，具备企业级身份认证和权限管理功能，全面支持100租户+10万用户的生产级安全需求！** 🚀

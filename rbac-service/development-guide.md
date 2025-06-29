@@ -537,11 +537,14 @@ rbac-service:
   build: ./rbac-service
   container_name: rbac-service
   ports:
-    - "3002:3000"
+    - "3002:3002"
   environment:
     - NODE_ENV=production
-    - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform_rbac
-    - REDIS_URL=redis://redis:6379/3
+    - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform
+    - REDIS_URL=redis://redis:6379/2
+    - SERVICE_NAME=rbac-service
+    - SERVICE_PORT=3002
+    - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
     - JWT_SECRET=${JWT_SECRET}
     - CACHE_TTL=300
     - MAX_ROLES_PER_USER=10
@@ -561,7 +564,7 @@ rbac-service:
         cpus: '0.5'
   restart: unless-stopped
   healthcheck:
-    test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+    test: ["CMD", "curl", "-f", "http://localhost:3002/health"]
     interval: 30s
     timeout: 10s
     retries: 3
@@ -1150,15 +1153,53 @@ export class InternalRbacController {
   @Get('users/{userId}/roles')
   @UseGuards(ServiceTokenGuard)
   async getUserRoles(@Param('userId') userId: string, @Query('tenantId') tenantId: string) {
-    // 获取用户角色
+    // 获取用户角色和权限
     return this.rbacService.getUserRoles(userId, tenantId)
   }
 
-  @Post('users/{userId}/roles')
+  @Post('users/{userId}/assign-role')
   @UseGuards(ServiceTokenGuard)
   async assignUserRole(@Param('userId') userId: string, @Body() dto: AssignRoleDto) {
     // 分配用户角色
-    return this.rbacService.assignUserRole(userId, dto)
+    const result = await this.rbacService.assignUserRole(userId, dto)
+    
+    // 发布角色分配事件 (为后续事件驱动做准备)
+    await this.publishEvent('rbac.role_assigned', {
+      userId,
+      roleId: dto.roleId,
+      tenantId: dto.tenantId,
+      assignedBy: dto.assignedBy
+    })
+    
+    return result
+  }
+
+  @Delete('users/{userId}/roles/{roleId}')
+  @UseGuards(ServiceTokenGuard)  
+  async revokeUserRole(
+    @Param('userId') userId: string,
+    @Param('roleId') roleId: string,
+    @Body() dto: RevokeRoleDto
+  ) {
+    // 撤销用户角色
+    const result = await this.rbacService.revokeUserRole(userId, roleId, dto)
+    
+    // 发布角色撤销事件
+    await this.publishEvent('rbac.role_revoked', {
+      userId,
+      roleId,
+      tenantId: dto.tenantId,
+      revokedBy: dto.revokedBy
+    })
+    
+    return result
+  }
+
+  @Post('users/{userId}/assign-default-role')
+  @UseGuards(ServiceTokenGuard)
+  async assignDefaultRole(@Param('userId') userId: string, @Body() dto: AssignDefaultRoleDto) {
+    // 为新用户分配默认角色
+    return this.rbacService.assignDefaultRole(userId, dto.tenantId, dto.userType || 'member')
   }
 
   @Post('rls/set-context')
@@ -1193,6 +1234,440 @@ export class ServiceTokenGuard implements CanActivate {
   private validateServiceToken(token: string): boolean {
     // 验证逻辑：检查令牌是否有效
     return token === process.env.INTERNAL_SERVICE_TOKEN
+  }
+}
+```
+
+### 🎯 事件驱动架构集成
+
+#### RBAC服务事件发布能力
+```typescript
+// RBAC服务事件发布器
+@Injectable()
+export class RbacEventPublisher {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly logger: Logger
+  ) {}
+  
+  // 角色分配事件
+  async publishRoleAssignedEvent(assignmentData: {
+    userId: string;
+    roleId: string;
+    roleName: string;
+    assignedBy: string;
+    tenantId: string;
+    effectiveDate?: string;
+    expirationDate?: string;
+  }): Promise<void> {
+    const event = new RoleAssignedEvent(
+      assignmentData.userId,
+      {
+        roleId: assignmentData.roleId,
+        roleName: assignmentData.roleName,
+        assignedBy: assignmentData.assignedBy,
+        effectiveDate: assignmentData.effectiveDate || new Date().toISOString(),
+        expirationDate: assignmentData.expirationDate
+      },
+      assignmentData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+    this.logger.log(`Role assigned event published: ${assignmentData.userId} -> ${assignmentData.roleName}`);
+  }
+  
+  // 角色撤销事件
+  async publishRoleRevokedEvent(revocationData: {
+    userId: string;
+    roleId: string;
+    roleName: string;
+    revokedBy: string;
+    tenantId: string;
+    reason?: string;
+  }): Promise<void> {
+    const event = new RoleRevokedEvent(
+      revocationData.userId,
+      {
+        roleId: revocationData.roleId,
+        roleName: revocationData.roleName,
+        revokedBy: revocationData.revokedBy,
+        revocationTime: new Date().toISOString(),
+        reason: revocationData.reason
+      },
+      revocationData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+  }
+  
+  // 权限检查事件（用于审计）
+  async publishPermissionCheckedEvent(checkData: {
+    userId: string;
+    resource: string;
+    action: string;
+    allowed: boolean;
+    appliedRoles: string[];
+    tenantId: string;
+    context?: Record<string, any>;
+  }): Promise<void> {
+    const event = new PermissionCheckedEvent(
+      checkData.userId,
+      {
+        resource: checkData.resource,
+        action: checkData.action,
+        allowed: checkData.allowed,
+        appliedRoles: checkData.appliedRoles,
+        context: checkData.context || {}
+      },
+      checkData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+  }
+  
+  // 角色创建事件
+  async publishRoleCreatedEvent(roleData: {
+    roleId: string;
+    roleName: string;
+    roleType: string;
+    permissions: string[];
+    createdBy: string;
+    tenantId: string;
+  }): Promise<void> {
+    const event = new RoleCreatedEvent(
+      roleData.roleId,
+      {
+        roleName: roleData.roleName,
+        roleType: roleData.roleType,
+        permissions: roleData.permissions,
+        createdBy: roleData.createdBy
+      },
+      roleData.tenantId
+    );
+    
+    await this.eventBus.publishEvent(event);
+  }
+}
+
+// RBAC相关事件定义
+class RoleAssignedEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      roleId: string;
+      roleName: string;
+      assignedBy: string;
+      effectiveDate: string;
+      expirationDate?: string;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'UserRole', eventData, {
+      source: 'rbac-service',
+      causedBy: 'role_assignment'
+    }, tenantId, eventData.assignedBy);
+  }
+}
+
+class RoleRevokedEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      roleId: string;
+      roleName: string;
+      revokedBy: string;
+      revocationTime: string;
+      reason?: string;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'UserRole', eventData, {
+      source: 'rbac-service',
+      causedBy: 'role_revocation'
+    }, tenantId, eventData.revokedBy);
+  }
+}
+
+class PermissionCheckedEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      resource: string;
+      action: string;
+      allowed: boolean;
+      appliedRoles: string[];
+      context: Record<string, any>;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'Permission', eventData, {
+      source: 'rbac-service',
+      causedBy: 'permission_check'
+    }, tenantId, userId);
+  }
+}
+
+class RoleCreatedEvent extends DomainEvent {
+  constructor(
+    roleId: string,
+    eventData: {
+      roleName: string;
+      roleType: string;
+      permissions: string[];
+      createdBy: string;
+    },
+    tenantId: string
+  ) {
+    super(roleId, 'Role', eventData, {
+      source: 'rbac-service',
+      causedBy: 'role_creation'
+    }, tenantId, eventData.createdBy);
+  }
+}
+```
+
+#### 集成到RBAC服务
+```typescript
+// RBAC服务主类集成
+@Injectable()
+export class RbacService {
+  constructor(
+    private readonly roleRepository: RoleRepository,
+    private readonly userRoleRepository: UserRoleRepository,
+    private readonly eventPublisher: RbacEventPublisher,
+    private readonly cacheService: PermissionCacheService
+  ) {}
+  
+  async assignUserRole(
+    userId: string,
+    assignRoleDto: AssignRoleDto
+  ): Promise<AssignRoleResponse> {
+    // 1. 分配角色
+    const assignment = await this.userRoleRepository.create({
+      userId,
+      roleId: assignRoleDto.roleId,
+      tenantId: assignRoleDto.tenantId,
+      assignedBy: assignRoleDto.assignedBy,
+      effectiveDate: assignRoleDto.effectiveDate,
+      expirationDate: assignRoleDto.expirationDate
+    });
+    
+    // 2. 获取角色信息
+    const role = await this.roleRepository.findById(assignRoleDto.roleId);
+    
+    // 3. 发布角色分配事件
+    await this.eventPublisher.publishRoleAssignedEvent({
+      userId,
+      roleId: assignRoleDto.roleId,
+      roleName: role.name,
+      assignedBy: assignRoleDto.assignedBy,
+      tenantId: assignRoleDto.tenantId,
+      effectiveDate: assignRoleDto.effectiveDate,
+      expirationDate: assignRoleDto.expirationDate
+    });
+    
+    // 4. 清除用户权限缓存
+    await this.cacheService.clearUserPermissionCache(userId, assignRoleDto.tenantId);
+    
+    return {
+      success: true,
+      assignmentId: assignment.id,
+      role: role
+    };
+  }
+  
+  async revokeUserRole(
+    userId: string,
+    roleId: string,
+    revokeRoleDto: RevokeRoleDto
+  ): Promise<RevokeRoleResponse> {
+    // 1. 获取角色信息
+    const role = await this.roleRepository.findById(roleId);
+    
+    // 2. 撤销角色
+    await this.userRoleRepository.softDelete({
+      userId,
+      roleId,
+      tenantId: revokeRoleDto.tenantId
+    }, revokeRoleDto.revokedBy);
+    
+    // 3. 发布角色撤销事件
+    await this.eventPublisher.publishRoleRevokedEvent({
+      userId,
+      roleId,
+      roleName: role.name,
+      revokedBy: revokeRoleDto.revokedBy,
+      tenantId: revokeRoleDto.tenantId,
+      reason: revokeRoleDto.reason
+    });
+    
+    // 4. 清除用户权限缓存
+    await this.cacheService.clearUserPermissionCache(userId, revokeRoleDto.tenantId);
+    
+    return {
+      success: true,
+      revokedRole: role
+    };
+  }
+  
+  async checkPermission(
+    checkPermissionDto: PermissionCheckDto
+  ): Promise<PermissionCheckResponse> {
+    // 1. 执行权限检查
+    const result = await this.cacheService.checkWithCache(
+      checkPermissionDto.userId,
+      checkPermissionDto.action,
+      checkPermissionDto.resource,
+      checkPermissionDto.tenantId
+    );
+    
+    // 2. 发布权限检查事件（用于审计）
+    await this.eventPublisher.publishPermissionCheckedEvent({
+      userId: checkPermissionDto.userId,
+      resource: checkPermissionDto.resource,
+      action: checkPermissionDto.action,
+      allowed: result.allowed,
+      appliedRoles: result.appliedRoles,
+      tenantId: checkPermissionDto.tenantId,
+      context: checkPermissionDto.context
+    });
+    
+    return result;
+  }
+}
+```
+
+#### 事件订阅处理
+```typescript
+// RBAC服务事件处理器
+@Injectable()
+export class RbacEventHandler implements EventHandler {
+  constructor(
+    private readonly rbacService: RbacService,
+    private readonly userRoleRepository: UserRoleRepository,
+    private readonly logger: Logger
+  ) {}
+  
+  async handle(event: BaseEvent): Promise<void> {
+    switch (event.eventType) {
+      case 'user.created':
+        await this.handleUserCreated(event as UserCreatedEvent);
+        break;
+        
+      case 'user.deleted':
+        await this.handleUserDeleted(event as UserDeletedEvent);
+        break;
+        
+      case 'user.status_changed':
+        await this.handleUserStatusChanged(event as UserStatusChangedEvent);
+        break;
+        
+      default:
+        this.logger.warn(`Unhandled event type: ${event.eventType}`);
+    }
+  }
+  
+  private async handleUserCreated(event: UserCreatedEvent): Promise<void> {
+    const { aggregateId: userId, tenantId } = event;
+    
+    // 为新用户自动分配默认角色
+    await this.rbacService.assignDefaultRole(userId, tenantId, 'member');
+    this.logger.log(`Assigned default role to new user: ${userId}`);
+  }
+  
+  private async handleUserDeleted(event: UserDeletedEvent): Promise<void> {
+    const { aggregateId: userId, tenantId } = event;
+    
+    // 清理用户的所有角色分配
+    await this.userRoleRepository.deleteAllUserRoles(userId, tenantId);
+    this.logger.log(`Cleaned up all roles for deleted user: ${userId}`);
+  }
+  
+  private async handleUserStatusChanged(event: UserStatusChangedEvent): Promise<void> {
+    const { aggregateId: userId, eventData } = event;
+    
+    // 如果用户被停用，暂停所有角色
+    if (eventData.newStatus === 'suspended' || eventData.newStatus === 'inactive') {
+      await this.userRoleRepository.suspendUserRoles(userId, event.tenantId);
+      this.logger.log(`Suspended all roles for user status change: ${userId}`);
+    }
+    
+    // 如果用户被重新激活，恢复角色
+    if (eventData.oldStatus !== 'active' && eventData.newStatus === 'active') {
+      await this.userRoleRepository.reactivateUserRoles(userId, event.tenantId);
+      this.logger.log(`Reactivated roles for user status change: ${userId}`);
+    }
+  }
+}
+
+// 在应用启动时注册事件订阅
+@Injectable()
+export class RbacServiceBootstrap {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly eventHandler: RbacEventHandler
+  ) {}
+  
+  async onApplicationBootstrap(): Promise<void> {
+    // 订阅用户相关事件
+    await this.eventBus.subscribeToEvents(
+      ['user.created', 'user.deleted', 'user.status_changed'],
+      'rbac-service-consumer-group',
+      'rbac-service-instance-1',
+      this.eventHandler
+    );
+    
+    console.log('RBAC service event subscriptions registered');
+  }
+}
+```
+
+#### 权限缓存失效策略
+```typescript
+// 基于事件的缓存失效
+@Injectable()
+export class EventDrivenCacheService {
+  constructor(
+    private readonly redis: Redis,
+    private readonly eventBus: EventBusService
+  ) {}
+  
+  async invalidateUserPermissions(userId: string, tenantId: string): Promise<void> {
+    // 清除用户相关的所有权限缓存
+    const pattern = `rbac:user:${userId}:*`;
+    const keys = await this.redis.keys(pattern);
+    
+    if (keys.length > 0) {
+      await this.redis.del(...keys);
+    }
+    
+    // 发布缓存失效事件
+    const event = new PermissionCacheInvalidatedEvent(userId, {
+      userId,
+      tenantId,
+      invalidatedKeys: keys,
+      reason: 'role_change'
+    }, tenantId);
+    
+    await this.eventBus.publishEvent(event);
+  }
+}
+
+class PermissionCacheInvalidatedEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      userId: string;
+      tenantId: string;
+      invalidatedKeys: string[];
+      reason: string;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'PermissionCache', eventData, {
+      source: 'rbac-service',
+      causedBy: 'cache_invalidation'
+    }, tenantId);
   }
 }
 ```
@@ -1305,8 +1780,10 @@ services:
       - "3002:3002"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform
       - REDIS_URL=redis://redis:6379/2
+      - SERVICE_NAME=rbac-service
+      - SERVICE_PORT=3002
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
       - AUTH_SERVICE_URL=http://auth-service:3001
       - USER_SERVICE_URL=http://user-management-service:3003

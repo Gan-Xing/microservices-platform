@@ -836,13 +836,25 @@ Body: AuditEvent[]
 ```typescript
 // 审计服务 → 认证服务 (3001)
 // 验证操作者身份
-POST http://auth-service:3001/internal/tokens/verify
-Headers: X-Service-Token: {内部服务令牌}
+POST http://auth-service:3001/internal/auth/verify-token
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
 Body: { "token": "jwt_token" }
+Response: { 
+  "valid": true, 
+  "payload": JWTPayload, 
+  "user": User,
+  "sessionId": "session_uuid"
+}
 
 // 获取会话信息
-GET http://auth-service:3001/internal/sessions/{sessionId}
-Headers: X-Service-Token: {内部服务令牌}
+GET http://auth-service:3001/internal/auth/sessions/{sessionId}
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
+Response: {
+  "sessionId": "session_uuid",
+  "userId": "user_uuid", 
+  "tenantId": "tenant_uuid",
+  "isActive": true
+}
 ```
 
 ### 3. 与用户服务的交互 
@@ -850,12 +862,29 @@ Headers: X-Service-Token: {内部服务令牌}
 // 审计服务 → 用户管理服务 (3003)
 // 获取用户详细信息
 GET http://user-management-service:3003/internal/users/{userId}
-Headers: X-Service-Token: {内部服务令牌}
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
+Response: {
+  "id": "user_uuid",
+  "tenantId": "tenant_uuid",
+  "username": "username",
+  "email": "user@example.com",
+  "status": "active"
+}
 
 // 批量获取用户信息
-POST http://user-management-service:3003/internal/users/batch
-Headers: X-Service-Token: {内部服务令牌}
-Body: { "userIds": ["user1", "user2"] }
+POST http://user-management-service:3003/internal/users/batch-query
+Headers: X-Service-Token: {内部服务令牌}, X-Request-ID: {requestId}
+Body: { 
+  "userIds": ["user1", "user2"], 
+  "tenantId": "tenant_id" 
+}
+Response: {
+  "users": [
+    {"id": "user1", "username": "user1", "email": "user1@example.com"},
+    {"id": "user2", "username": "user2", "email": "user2@example.com"}
+  ],
+  "notFound": []
+}
 ```
 
 ### 4. 与权限服务的交互
@@ -888,6 +917,429 @@ Body: {
     "violationType": "GDPR_DATA_ACCESS",
     "userId": "violating_user_id",
     "timestamp": "2024-01-01T10:00:00Z"
+  }
+}
+```
+
+### 🎯 事件驱动架构改造
+
+#### 从同步API调用转为事件监听模式
+
+**改造前问题**：
+- 依赖其他服务主动调用审计API记录日志
+- 紧耦合，审计失败可能影响业务操作
+- 无法保证所有操作都被审计
+
+**改造后优势**：
+- 自动监听系统事件，确保审计完整性
+- 异步处理，不影响业务操作性能
+- 支持事件重放和补偿机制
+
+```typescript
+// 事件驱动审计服务架构
+@Injectable()
+export class EventDrivenAuditService {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly auditRepository: AuditRepository,
+    private readonly userService: UserService,
+    private readonly logger: Logger
+  ) {}
+  
+  // 统一事件处理入口
+  async handleAuditEvent(event: BaseEvent): Promise<void> {
+    try {
+      const auditEvent = await this.convertToAuditEvent(event);
+      await this.auditRepository.save(auditEvent);
+      
+      // 检查是否需要合规告警
+      await this.checkComplianceViolation(auditEvent);
+      
+      this.logger.log(`Audit event recorded: ${event.eventType}:${event.eventId}`);
+      
+    } catch (error) {
+      this.logger.error(`Failed to record audit event: ${error.message}`);
+      // 审计失败不应影响原业务，但需要记录失败日志
+      await this.recordAuditFailure(event, error);
+    }
+  }
+  
+  // 将业务事件转换为审计事件
+  private async convertToAuditEvent(event: BaseEvent): Promise<AuditEvent> {
+    // 获取用户信息（如果有userId）
+    let userInfo = null;
+    if (event.userId) {
+      userInfo = await this.userService.getUserInfo(event.userId);
+    }
+    
+    return {
+      id: generateId(),
+      tenantId: event.tenantId,
+      userId: event.userId,
+      sessionId: event.sessionId,
+      eventType: this.mapEventTypeToAuditType(event.eventType),
+      resource: event.aggregateType?.toLowerCase() || 'unknown',
+      resourceId: event.aggregateId,
+      action: this.extractActionFromEvent(event),
+      outcome: this.determineOutcome(event),
+      severity: this.calculateSeverity(event.eventType),
+      sourceIp: event.metadata?.sourceIp,
+      userAgent: event.metadata?.userAgent,
+      requestId: event.requestId,
+      correlationId: event.correlationId,
+      metadata: {
+        originalEvent: event,
+        userInfo: userInfo,
+        processingTime: Date.now() - new Date(event.timestamp).getTime()
+      },
+      beforeData: event.metadata?.beforeData,
+      afterData: event.eventData,
+      timestamp: new Date(event.timestamp),
+      processedAt: new Date()
+    };
+  }
+  
+  // 事件类型映射
+  private mapEventTypeToAuditType(eventType: string): AuditEventType {
+    const mappings: Record<string, AuditEventType> = {
+      'user.login': AuditEventType.AUTHENTICATION,
+      'user.login_failed': AuditEventType.AUTHENTICATION,
+      'user.created': AuditEventType.USER_MANAGEMENT,
+      'user.updated': AuditEventType.USER_MANAGEMENT,
+      'user.deleted': AuditEventType.USER_MANAGEMENT,
+      'user.status_changed': AuditEventType.USER_MANAGEMENT,
+      'role.assigned': AuditEventType.AUTHORIZATION,
+      'role.revoked': AuditEventType.AUTHORIZATION,
+      'permission.checked': AuditEventType.AUTHORIZATION,
+      'session.revoked': AuditEventType.AUTHENTICATION,
+      'password.changed': AuditEventType.SECURITY_EVENT,
+      'password.reset': AuditEventType.SECURITY_EVENT
+    };
+    
+    return mappings[eventType] || AuditEventType.SYSTEM_CONFIGURATION;
+  }
+}
+
+// 专门的事件处理器
+@Injectable()
+export class AuditEventHandler implements EventHandler {
+  constructor(
+    private readonly auditService: EventDrivenAuditService
+  ) {}
+  
+  async handle(event: BaseEvent): Promise<void> {
+    await this.auditService.handleAuditEvent(event);
+  }
+}
+```
+
+#### 事件订阅配置
+
+```typescript
+// 审计服务启动时的事件订阅配置
+@Injectable()
+export class AuditServiceBootstrap {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly auditEventHandler: AuditEventHandler
+  ) {}
+  
+  async onApplicationBootstrap(): Promise<void> {
+    // 订阅所有需要审计的事件类型
+    const auditableEvents = [
+      // 用户相关事件
+      'user.created',
+      'user.updated', 
+      'user.deleted',
+      'user.status_changed',
+      'user.password_changed',
+      
+      // 认证相关事件
+      'user.login',
+      'user.login_failed',
+      'session.created',
+      'session.revoked',
+      'password.reset',
+      
+      // 权限相关事件
+      'role.assigned',
+      'role.revoked',
+      'role.created',
+      'role.updated',
+      'permission.checked',
+      
+      // 系统配置事件
+      'tenant.created',
+      'tenant.updated',
+      'system.configuration_changed',
+      
+      // 数据访问事件
+      'data.accessed',
+      'data.exported',
+      'data.imported',
+      'data.deleted',
+      
+      // 安全事件
+      'security.violation_detected',
+      'security.suspicious_activity',
+      'security.policy_changed'
+    ];
+    
+    // 注册事件订阅
+    await this.eventBus.subscribeToEvents(
+      auditableEvents,
+      'audit-service-consumer-group',
+      'audit-service-instance-1',
+      this.auditEventHandler
+    );
+    
+    console.log(`Audit service subscribed to ${auditableEvents.length} event types`);
+  }
+}
+```
+
+#### 实时审计分析引擎
+
+```typescript
+// 实时审计分析和告警
+@Injectable()
+export class RealTimeAuditAnalyzer {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly notificationService: NotificationService,
+    private readonly redis: Redis
+  ) {}
+  
+  async analyzeAuditEvent(auditEvent: AuditEvent): Promise<void> {
+    // 1. 检查异常登录模式
+    await this.checkAnomalousLogin(auditEvent);
+    
+    // 2. 检查权限滥用
+    await this.checkPermissionAbuse(auditEvent);
+    
+    // 3. 检查数据访问异常
+    await this.checkDataAccessAnomalies(auditEvent);
+    
+    // 4. 检查合规性违规
+    await this.checkComplianceViolations(auditEvent);
+  }
+  
+  private async checkAnomalousLogin(auditEvent: AuditEvent): Promise<void> {
+    if (auditEvent.eventType !== AuditEventType.AUTHENTICATION) return;
+    
+    const userId = auditEvent.userId;
+    if (!userId) return;
+    
+    // 检查异地登录
+    const lastLoginLocation = await this.redis.get(`last_login_location:${userId}`);
+    const currentLocation = auditEvent.metadata?.location;
+    
+    if (lastLoginLocation && currentLocation) {
+      const distance = this.calculateDistance(
+        JSON.parse(lastLoginLocation),
+        currentLocation
+      );
+      
+      // 如果距离超过1000公里且时间间隔小于1小时，触发告警
+      if (distance > 1000) {
+        const lastLoginTime = await this.redis.get(`last_login_time:${userId}`);
+        const timeDiff = Date.now() - parseInt(lastLoginTime || '0');
+        
+        if (timeDiff < 3600000) { // 1小时
+          await this.sendSecurityAlert({
+            type: 'anomalous_login',
+            userId,
+            details: `Suspicious login detected: ${distance}km in ${timeDiff/60000} minutes`,
+            auditEventId: auditEvent.id
+          });
+        }
+      }
+    }
+    
+    // 更新最后登录信息
+    await this.redis.set(`last_login_location:${userId}`, JSON.stringify(currentLocation));
+    await this.redis.set(`last_login_time:${userId}`, Date.now().toString());
+  }
+  
+  private async checkPermissionAbuse(auditEvent: AuditEvent): Promise<void> {
+    if (auditEvent.eventType !== AuditEventType.AUTHORIZATION) return;
+    
+    const userId = auditEvent.userId;
+    if (!userId) return;
+    
+    // 检查短时间内大量权限检查
+    const key = `permission_checks:${userId}:${Math.floor(Date.now() / 60000)}`; // 按分钟统计
+    const checkCount = await this.redis.incr(key);
+    await this.redis.expire(key, 60);
+    
+    if (checkCount > 100) { // 1分钟内超过100次权限检查
+      await this.sendSecurityAlert({
+        type: 'permission_abuse',
+        userId,
+        details: `High frequency permission checks: ${checkCount} in 1 minute`,
+        auditEventId: auditEvent.id
+      });
+    }
+  }
+  
+  private async sendSecurityAlert(alert: SecurityAlert): Promise<void> {
+    // 发送安全告警事件
+    const securityEvent = new SecurityViolationEvent(
+      alert.userId,
+      {
+        violationType: alert.type,
+        details: alert.details,
+        auditEventId: alert.auditEventId,
+        severity: 'high',
+        detectedAt: new Date().toISOString()
+      },
+      auditEvent.tenantId
+    );
+    
+    await this.eventBus.publishEvent(securityEvent);
+  }
+}
+
+// 安全违规事件定义
+class SecurityViolationEvent extends DomainEvent {
+  constructor(
+    userId: string,
+    eventData: {
+      violationType: string;
+      details: string;
+      auditEventId: string;
+      severity: string;
+      detectedAt: string;
+    },
+    tenantId: string
+  ) {
+    super(userId, 'SecurityViolation', eventData, {
+      source: 'audit-service',
+      causedBy: 'security_analysis'
+    }, tenantId, userId);
+  }
+}
+```
+
+#### 审计数据流水线
+
+```typescript
+// 审计数据处理流水线
+@Injectable()
+export class AuditDataPipeline {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly auditRepository: AuditRepository,
+    private readonly searchIndex: AuditSearchService,
+    private readonly dataWarehouse: AuditDataWarehouse
+  ) {}
+  
+  async processAuditEvent(event: BaseEvent): Promise<void> {
+    // 并行处理审计数据
+    await Promise.allSettled([
+      // 1. 存储到主数据库
+      this.storeToDatabase(event),
+      
+      // 2. 索引到搜索引擎 (PostgreSQL全文搜索)
+      this.indexForSearch(event),
+      
+      // 3. 推送到数据仓库 (用于分析)
+      this.pushToDataWarehouse(event),
+      
+      // 4. 实时分析
+      this.analyzeInRealTime(event),
+      
+      // 5. 合规性检查
+      this.checkCompliance(event)
+    ]);
+  }
+  
+  private async storeToDatabase(event: BaseEvent): Promise<void> {
+    const auditEvent = await this.convertToAuditEvent(event);
+    await this.auditRepository.save(auditEvent);
+  }
+  
+  private async indexForSearch(event: BaseEvent): Promise<void> {
+    // 使用PostgreSQL全文搜索索引
+    await this.searchIndex.indexEvent(event);
+  }
+  
+  private async pushToDataWarehouse(event: BaseEvent): Promise<void> {
+    // 异步推送到数据仓库进行长期分析
+    const warehouseEvent = {
+      ...event,
+      warehouseTimestamp: new Date().toISOString(),
+      partition: this.calculatePartition(event.timestamp)
+    };
+    
+    await this.dataWarehouse.store(warehouseEvent);
+  }
+}
+```
+
+#### 合规性自动检查
+
+```typescript
+// GDPR/SOX等合规性自动检查
+@Injectable()
+export class ComplianceChecker {
+  constructor(
+    private readonly eventBus: EventBusService,
+    private readonly configService: ConfigService
+  ) {}
+  
+  async checkEventCompliance(auditEvent: AuditEvent): Promise<void> {
+    // GDPR合规性检查
+    await this.checkGDPRCompliance(auditEvent);
+    
+    // SOX合规性检查
+    await this.checkSOXCompliance(auditEvent);
+    
+    // 自定义合规规则检查
+    await this.checkCustomComplianceRules(auditEvent);
+  }
+  
+  private async checkGDPRCompliance(auditEvent: AuditEvent): Promise<void> {
+    // 检查个人数据访问
+    if (this.isPersonalDataAccess(auditEvent)) {
+      // 验证是否有合法依据
+      const hasLegalBasis = await this.verifyLegalBasis(auditEvent);
+      
+      if (!hasLegalBasis) {
+        await this.reportComplianceViolation({
+          type: 'GDPR_VIOLATION',
+          description: 'Personal data accessed without legal basis',
+          auditEventId: auditEvent.id,
+          severity: 'critical'
+        });
+      }
+      
+      // 检查数据保留期限
+      await this.checkDataRetentionPolicy(auditEvent);
+    }
+  }
+  
+  private async reportComplianceViolation(violation: ComplianceViolation): Promise<void> {
+    const complianceEvent = new ComplianceViolationEvent(
+      violation.auditEventId,
+      violation,
+      auditEvent.tenantId
+    );
+    
+    await this.eventBus.publishEvent(complianceEvent);
+  }
+}
+
+class ComplianceViolationEvent extends DomainEvent {
+  constructor(
+    auditEventId: string,
+    violationData: ComplianceViolation,
+    tenantId: string
+  ) {
+    super(auditEventId, 'ComplianceViolation', violationData, {
+      source: 'audit-service',
+      causedBy: 'compliance_check'
+    }, tenantId);
   }
 }
 ```
@@ -1169,11 +1621,11 @@ services:
     build: .
     container_name: audit-service
     ports:
-      - "3008:3008"  # 修正端口
+      - "3008:3008"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://audit_user:audit_pass@postgres:5432/platform_db?schema=audit
-      - REDIS_URL=redis://redis:6379/2  # 使用数据库2
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379/8  # 使用数据库8
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
       - LOG_LEVEL=info
     depends_on:
@@ -1186,14 +1638,19 @@ services:
       - ./config:/app/config:ro
     networks:
       - platform-network
-    mem_limit: 512m
-    mem_reservation: 256m
-    cpus: '0.5'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:3008/health"]
       interval: 30s
-      timeout: 5s
+      timeout: 10s
       retries: 3
       start_period: 40s
 
@@ -1757,54 +2214,3 @@ export default {
   }
 }
 ```
-
-## 🔧 三个开发阶段完成情况评估
-
-### 1.1 需求分析阶段 (Requirements Analysis) ✅
-- ✅ **业务需求收集**: 已更新明硁服务核心职责和功能范围
-- ✅ **技术需求分析**: 已优化性能指标（100租户+10万用户，日处理100万条记录）
-- ✅ **用户故事编写**: 通过完整API端点体现用户使用场景
-- ✅ **验收标准定义**: 已更新明确的功能验收和性能标准
-- ✅ **架构设计文档**: 已增强技术架构说明和微服务集成
-
-### 1.2 项目规划阶段 (Project Planning) ✅
-- ✅ **项目计划制定**: 已更新具体的开发时间线和5个集成阶段
-- ✅ **里程碑设置**: 已优化阶段性目标和交付节点（Week 2，序号#7）
-- ✅ **资源分配**: 已增强内存分配(512MB)、存储需求(20GB)、开发优先级
-- ✅ **风险评估**: 已详细分析技术风险和缓解方案
-- ✅ **技术栈选择**: 已全面优化符合标准版本技术栈
-
-### 1.3 架构设计阶段 (Architecture Design) ✅ 
-- ✅ **系统架构设计**: 已增强完整的微服务架构和内部API设计
-- ✅ **数据库设计**: 已完整PostgreSQL表结构设计和索引优化
-- ✅ **API设计**: 已完整RESTful接口定义和内部服务通信
-- ✅ **安全架构设计**: 已优化符合标准版本安全要求
-- ✅ **性能规划**: 已增强针对标准版本规模的性能设计
-
-## 主要改进点总结
-
-### ✅ 标准版本技术栈优化
-- 优化了内存分配（256MB → 512MB）以适应日志处理需求
-- 增加了存储需求评估（20GB初始磁盘空间）
-- 强化了PostgreSQL全文搜索替代Elasticsearch的方案
-- 确认使用Redis Streams替代Kafka的消息队列方案
-
-### ✅ 项目规划全面完善
-- 修正开发时间线（Week 3 → Week 2，序号#7）
-- 增强了风险评估和缓解方案
-- 优化了服务依赖关系分析（强依赖/弱依赖）
-- 新增了5个集成阶段的详细计划
-
-### ✅ 微服务集成增强
-- 增加了内部API设计原则和认证机制
-- 优化了服务间通信的容错机制
-- 增强了与所有11个服务的集成设计
-- 新增了统一审计装饰器的设计方案
-
-### ✅ Docker Compose配置优化
-- 修正了端口号（3007 → 3008）
-- 增加了健康检查和资源限制
-- 优化了网络配置和服务发现
-- 增强了生产环境的可靠性配置
-
-这个日志审计服务将为整个微服务平台提供全面的审计追踪和合规管理能力，确保系统操作的透明性和安全性，满足各种合规要求，并完全符合标准版本目标。

@@ -432,11 +432,311 @@ interface MessageQueueMetrics {
 }
 ```
 
-### 健康检查
-- Redis连通性检查
-- 数据库连接状态
-- 队列状态监控
-- 消费者健康状态
+### 健康检查实现
+```typescript
+// 消息队列服务健康检查控制器
+@Controller('health')
+export class MessageQueueHealthController {
+  constructor(
+    private readonly redis: Redis,
+    private readonly prisma: PrismaService,
+    private readonly messageQueueService: MessageQueueService
+  ) {}
+
+  @Get()
+  async checkHealth(): Promise<HealthCheckResponse> {
+    const startTime = Date.now();
+    
+    const checks = await Promise.allSettled([
+      this.checkRedisStreams(),
+      this.checkDatabase(),
+      this.checkQueues(),
+      this.checkConsumers(),
+      this.checkMemory(),
+      this.checkDependencies()
+    ]);
+    
+    const redisStatus = checks[0].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const databaseStatus = checks[1].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const queuesStatus = checks[2].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const consumersStatus = checks[3].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const memoryStatus = checks[4].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    const dependenciesStatus = checks[5].status === 'fulfilled' ? 'healthy' : 'unhealthy';
+    
+    const overallStatus = [redisStatus, databaseStatus, queuesStatus, consumersStatus, memoryStatus, dependenciesStatus]
+      .every(status => status === 'healthy') ? 'healthy' : 'unhealthy';
+    
+    const responseTime = Date.now() - startTime;
+    
+    return {
+      status: overallStatus,
+      timestamp: new Date().toISOString(),
+      service: 'message-queue-service',
+      version: '1.0.0',
+      uptime: process.uptime(),
+      responseTime,
+      checks: {
+        redisStreams: redisStatus,
+        database: databaseStatus,
+        queues: queuesStatus,
+        consumers: consumersStatus,
+        memory: memoryStatus,
+        dependencies: dependenciesStatus
+      },
+      metrics: await this.getHealthMetrics()
+    };
+  }
+
+  @Get('ping')
+  async ping(): Promise<{ status: string; timestamp: string; latency: number }> {
+    const startTime = Date.now();
+    
+    try {
+      await this.redis.ping();
+      const latency = Date.now() - startTime;
+      
+      return {
+        status: 'pong',
+        timestamp: new Date().toISOString(),
+        latency
+      };
+    } catch (error) {
+      throw new ServiceUnavailableException('Redis connection failed');
+    }
+  }
+
+  @Get('status')
+  async getStatus(): Promise<MessageQueueStatusResponse> {
+    const redisInfo = await this.redis.info();
+    const memory = process.memoryUsage();
+    const queuesInfo = await this.getQueuesInfo();
+    
+    return {
+      service: 'message-queue-service',
+      status: 'running',
+      timestamp: new Date().toISOString(),
+      redis: {
+        version: redisInfo.redis_version,
+        uptime: parseInt(redisInfo.uptime_in_seconds),
+        connectedClients: parseInt(redisInfo.connected_clients),
+        usedMemory: redisInfo.used_memory_human,
+        totalCommandsProcessed: parseInt(redisInfo.total_commands_processed)
+      },
+      queues: queuesInfo,
+      application: {
+        nodeVersion: process.version,
+        pid: process.pid,
+        uptime: process.uptime(),
+        memory: {
+          rss: Math.round(memory.rss / 1024 / 1024),
+          heapUsed: Math.round(memory.heapUsed / 1024 / 1024),
+          heapTotal: Math.round(memory.heapTotal / 1024 / 1024)
+        }
+      }
+    };
+  }
+
+  private async checkRedisStreams(): Promise<void> {
+    // 检查Redis Streams连接和基本操作
+    const testStream = 'health:check:stream:' + Date.now();
+    
+    try {
+      // 测试写入stream
+      const messageId = await this.redis.xadd(testStream, '*', 'test', 'data');
+      
+      // 测试读取stream
+      const messages = await this.redis.xrange(testStream, '-', '+');
+      if (messages.length === 0) {
+        throw new Error('Redis Streams read test failed');
+      }
+      
+      // 清理测试数据
+      await this.redis.del(testStream);
+    } catch (error) {
+      throw new Error(`Redis Streams health check failed: ${error.message}`);
+    }
+  }
+
+  private async checkDatabase(): Promise<void> {
+    // 检查PostgreSQL连接
+    await this.prisma.$queryRaw`SELECT 1`;
+  }
+
+  private async checkQueues(): Promise<void> {
+    // 检查活跃队列状态
+    const activeQueues = await this.messageQueueService.getActiveQueues();
+    
+    for (const queue of activeQueues) {
+      try {
+        const queueInfo = await this.redis.xinfo('STREAM', queue.name);
+        if (!queueInfo) {
+          throw new Error(`Queue ${queue.name} is not accessible`);
+        }
+      } catch (error) {
+        throw new Error(`Queue health check failed for ${queue.name}: ${error.message}`);
+      }
+    }
+  }
+
+  private async checkConsumers(): Promise<void> {
+    // 检查消费者组状态
+    const activeConsumers = await this.messageQueueService.getActiveConsumers();
+    
+    // 检查是否有消费者处于异常状态
+    const unhealthyConsumers = activeConsumers.filter(consumer => {
+      const lastHeartbeat = new Date(consumer.lastHeartbeat);
+      const now = new Date();
+      const timeSinceLastHeartbeat = now.getTime() - lastHeartbeat.getTime();
+      
+      // 如果超过60秒没有心跳，认为消费者不健康
+      return timeSinceLastHeartbeat > 60000;
+    });
+
+    if (unhealthyConsumers.length > 0) {
+      throw new Error(`Found ${unhealthyConsumers.length} unhealthy consumers`);
+    }
+  }
+
+  private async checkMemory(): Promise<void> {
+    const memory = process.memoryUsage();
+    const memoryUsageMB = memory.heapUsed / 1024 / 1024;
+    
+    // 检查内存使用是否超过阈值(400MB警告)
+    if (memoryUsageMB > 400) {
+      throw new Error(`High memory usage: ${Math.round(memoryUsageMB)}MB`);
+    }
+  }
+
+  private async checkDependencies(): Promise<void> {
+    // 检查关键服务依赖
+    const dependencies = [
+      { name: 'auth-service', url: process.env.AUTH_SERVICE_URL },
+      { name: 'user-service', url: process.env.USER_SERVICE_URL },
+      { name: 'audit-service', url: process.env.AUDIT_SERVICE_URL },
+      { name: 'notification-service', url: process.env.NOTIFICATION_SERVICE_URL }
+    ];
+
+    for (const dep of dependencies) {
+      if (dep.url) {
+        try {
+          const response = await fetch(`${dep.url}/health`, { timeout: 3000 });
+          if (!response.ok) {
+            throw new Error(`${dep.name} health check failed`);
+          }
+        } catch (error) {
+          // 依赖服务不可用时只记录警告，不影响自身健康状态
+          console.warn(`Dependency ${dep.name} is unavailable:`, error.message);
+        }
+      }
+    }
+  }
+
+  private async getHealthMetrics(): Promise<any> {
+    const metrics = await this.messageQueueService.getMetrics();
+    const memory = process.memoryUsage();
+    
+    return {
+      messageQueue: {
+        totalQueues: metrics.totalQueues,
+        totalMessages: metrics.totalMessages,
+        pendingMessages: metrics.pendingMessages,
+        processingRate: metrics.processingRate,
+        errorRate: metrics.errorRate,
+        averageLatency: metrics.averageLatency
+      },
+      consumers: {
+        activeConsumers: metrics.activeConsumers,
+        totalLag: metrics.totalLag
+      },
+      system: {
+        memory: {
+          used: Math.round(memory.heapUsed / 1024 / 1024),
+          total: Math.round(memory.heapTotal / 1024 / 1024),
+          usage: Math.round((memory.heapUsed / memory.heapTotal) * 100)
+        },
+        uptime: process.uptime(),
+        cpu: process.cpuUsage()
+      }
+    };
+  }
+
+  private async getQueuesInfo(): Promise<any> {
+    const queues = await this.messageQueueService.getActiveQueues();
+    const queuesInfo = [];
+
+    for (const queue of queues) {
+      try {
+        const streamInfo = await this.redis.xinfo('STREAM', queue.name);
+        queuesInfo.push({
+          name: queue.name,
+          length: streamInfo.length,
+          lastGeneratedId: streamInfo['last-generated-id'],
+          groups: streamInfo['groups']
+        });
+      } catch (error) {
+        queuesInfo.push({
+          name: queue.name,
+          status: 'error',
+          error: error.message
+        });
+      }
+    }
+
+    return queuesInfo;
+  }
+}
+
+// 健康检查响应接口
+interface HealthCheckResponse {
+  status: 'healthy' | 'unhealthy' | 'degraded';
+  timestamp: string;
+  service: string;
+  version: string;
+  uptime: number;
+  responseTime: number;
+  checks: {
+    redisStreams: string;
+    database: string;
+    queues: string;
+    consumers: string;
+    memory: string;
+    dependencies: string;
+  };
+  metrics: any;
+}
+
+interface MessageQueueStatusResponse {
+  service: string;
+  status: string;
+  timestamp: string;
+  redis: {
+    version: string;
+    uptime: number;
+    connectedClients: number;
+    usedMemory: string;
+    totalCommandsProcessed: number;
+  };
+  queues: any[];
+  application: {
+    nodeVersion: string;
+    pid: number;
+    uptime: number;
+    memory: {
+      rss: number;
+      heapUsed: number;
+      heapTotal: number;
+    };
+  };
+}
+```
+
+### 健康检查特性
+- **Redis连通性检查**: 测试Redis Streams读写操作
+- **数据库连接状态**: 验证PostgreSQL连接
+- **队列状态监控**: 检查所有活跃队列的健康状态
+- **消费者健康状态**: 监控消费者组的心跳和处理状态
+- **内存使用监控**: 防止内存泄漏和过度使用
+- **依赖服务检查**: 验证关键服务的可用性
 
 ## 🐳 部署配置
 
@@ -446,11 +746,14 @@ interface MessageQueueMetrics {
 services:
   message-queue-service:
     build: ./message-queue-service
+    container_name: message-queue-service
     ports:
       - "3010:3010"
     environment:
-      - DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
-      - REDIS_URL=redis://redis:6379/5
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379/10
+      - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
       - AUTH_SERVICE_URL=http://auth-service:3001
       - USER_SERVICE_URL=http://user-management-service:3003
       - AUDIT_SERVICE_URL=http://audit-service:3008
@@ -459,21 +762,39 @@ services:
       - MAX_CONCURRENT_CONSUMERS=5
       - PROCESSING_TIMEOUT_MS=15000
     depends_on:
-      - postgres
-      - redis
-      - auth-service
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
     networks:
       - platform-network
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+          cpus: '0.75'
+        reservations:
+          memory: 384M
+          cpus: '0.5'
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3010/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
 ```
 
 ### 环境变量配置
 ```env
 NODE_ENV=production
 PORT=3010
-DATABASE_URL=postgresql://postgres:password@postgres:5432/platform
-REDIS_URL=redis://redis:6379/5
+DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+REDIS_URL=redis://redis:6379/10
 REDIS_KEY_PREFIX=mq:
-INTERNAL_SERVICE_TOKEN=your-internal-service-token
+INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
 MAX_MESSAGE_SIZE=1048576  # 1MB
 DEFAULT_TTL=604800       # 7天
 MAX_QUEUE_LENGTH=10000

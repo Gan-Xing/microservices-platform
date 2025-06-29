@@ -963,8 +963,8 @@ services:
       - "3005:3005"
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379/5
       - INTERNAL_SERVICE_TOKEN=${INTERNAL_SERVICE_TOKEN}
       - SMTP_HOST=${SMTP_HOST}
       - SMTP_PORT=${SMTP_PORT}
@@ -975,8 +975,10 @@ services:
     networks:
       - platform-network
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
@@ -1000,13 +1002,15 @@ services:
     container_name: notification-worker
     environment:
       - NODE_ENV=production
-      - DATABASE_URL=postgresql://user:pass@postgres:5432/platform
-      - REDIS_URL=redis://redis:6379/0
+      - DATABASE_URL=postgresql://platform_user:platform_pass@postgres:5432/platform_db
+      - REDIS_URL=redis://redis:6379/5
     networks:
       - platform-network
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     deploy:
       resources:
         limits:
