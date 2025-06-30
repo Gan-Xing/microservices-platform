@@ -5,6 +5,7 @@
 
 export * from './database.module';
 export * from './database.service';
+export * from './rls.service';
 export * from './transaction.decorator';
 export * from './repository.base';
 export * from './connection.provider';

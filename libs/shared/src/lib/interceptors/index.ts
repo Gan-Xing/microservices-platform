@@ -8,3 +8,4 @@ export * from './logging.interceptor';
 export * from './timeout.interceptor';
 export * from './error-handling.interceptor';
 export * from './audit.interceptor';
+export * from './tenant-context.interceptor';

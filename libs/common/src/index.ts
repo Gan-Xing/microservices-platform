@@ -34,3 +34,6 @@ export * from './lib/validation';
 
 // HTTP工具
 export * from './lib/http';
+
+// 审计工具
+export * from './lib/audit';

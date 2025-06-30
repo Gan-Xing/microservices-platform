@@ -29,6 +29,9 @@ export * from './lib/guards';
 // 拦截器
 export * from './lib/interceptors';
 
+// 服务
+export * from './lib/services';
+
 // 异常过滤器
 export * from './lib/filters';
 
