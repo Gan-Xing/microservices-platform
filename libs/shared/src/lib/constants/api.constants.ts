@@ -1,0 +1,66 @@
+/**
+ * API 相关常量定义
+ * 企业级微服务平台标准版本
+ */
+
+// API版本
+export const API_VERSION = 'v1';
+
+// API前缀
+export const API_PREFIX = 'api';
+
+// 服务端口定义
+export const SERVICE_PORTS = {
+  API_GATEWAY: 3000,
+  AUTH_SERVICE: 3001,
+  RBAC_SERVICE: 3002,
+  USER_MANAGEMENT: 3003,
+  TENANT_MANAGEMENT: 3004,
+  NOTIFICATION_SERVICE: 3005,
+  FILE_STORAGE: 3006,
+  MONITORING_SERVICE: 3007,
+  AUDIT_SERVICE: 3008,
+  SCHEDULER_SERVICE: 3009,
+  MESSAGE_QUEUE: 3010,
+  CACHE_SERVICE: 3011,
+} as const;
+
+// HTTP状态码
+export const HTTP_STATUS = {
+  OK: 200,
+  CREATED: 201,
+  NO_CONTENT: 204,
+  BAD_REQUEST: 400,
+  UNAUTHORIZED: 401,
+  FORBIDDEN: 403,
+  NOT_FOUND: 404,
+  CONFLICT: 409,
+  UNPROCESSABLE_ENTITY: 422,
+  INTERNAL_SERVER_ERROR: 500,
+  SERVICE_UNAVAILABLE: 503,
+} as const;
+
+// 认证相关
+export const AUTH_CONSTANTS = {
+  JWT_HEADER: 'Authorization',
+  JWT_PREFIX: 'Bearer',
+  INTERNAL_SERVICE_HEADER: 'X-Service-Token',
+  REQUEST_ID_HEADER: 'X-Request-ID',
+  CORRELATION_ID_HEADER: 'X-Correlation-ID',
+  TENANT_HEADER: 'X-Tenant-ID',
+} as const;
+
+// 分页默认值
+export const PAGINATION = {
+  DEFAULT_PAGE: 1,
+  DEFAULT_LIMIT: 20,
+  MAX_LIMIT: 100,
+} as const;
+
+// 速率限制
+export const RATE_LIMITS = {
+  DEFAULT_WINDOW_MS: 60000, // 1分钟
+  DEFAULT_MAX_REQUESTS: 1000,
+  AUTH_WINDOW_MS: 900000, // 15分钟
+  AUTH_MAX_ATTEMPTS: 5,
+} as const;

@@ -79,9 +79,14 @@ temp/
 
 # Nx
 .nx/cache
+.nx/workspace-data
 
-# IDE files
-.vscode/
+# IDE files - keep VS Code settings but ignore user-specific files
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
 .idea/
 *.swp
 *.swo

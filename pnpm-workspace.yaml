@@ -1,0 +1,75 @@
+# pnpm workspace configuration for enterprise microservices platform
+# Supports 100 tenants + 100k users standard version
+
+packages:
+  # 12 core microservices applications
+  - 'apps/*'
+  
+  # 5 shared libraries
+  - 'libs/*'
+  
+  # Development tools and utilities
+  - 'tools/*'
+
+# Catalog entries for shared dependencies across all workspaces
+catalog:
+  # NestJS Framework (10.x)
+  '@nestjs/common': '^10.0.2'
+  '@nestjs/core': '^10.0.2'
+  '@nestjs/platform-express': '^10.0.2'
+  '@nestjs/config': '^3.0.0'
+  '@nestjs/jwt': '^10.1.0'
+  '@nestjs/passport': '^10.0.0'
+  '@nestjs/swagger': '^7.1.8'
+  '@nestjs/testing': '^10.0.2'
+  
+  # TypeScript (5.x)
+  'typescript': '~5.2.2'
+  '@types/node': '~18.16.9'
+  '@types/jest': '^29.4.0'
+  
+  # Prisma ORM
+  '@prisma/client': '^5.2.0'
+  'prisma': '^5.2.0'
+  
+  # Redis & Caching
+  'redis': '^4.6.7'
+  'ioredis': '^5.3.2'
+  'cache-manager': '^5.2.3'
+  
+  # Authentication & Security
+  'passport': '^0.6.0'
+  'passport-jwt': '^4.0.1'
+  'passport-local': '^1.0.0'
+  'bcrypt': '^5.1.0'
+  'helmet': '^7.0.0'
+  
+  # Validation & Transformation
+  'class-transformer': '^0.5.1'
+  'class-validator': '^0.14.0'
+  
+  # HTTP & Networking
+  'axios': '^1.0.0'
+  'express-rate-limit': '^6.10.0'
+  
+  # Utilities
+  'rxjs': '^7.8.0'
+  'reflect-metadata': '^0.1.13'
+  'compression': '^1.7.4'
+  'winston': '^3.10.0'
+  'prom-client': '^14.2.0'
+
+# Shared configuration for all packages
+shared-workspace-lockfile: true
+save-workspace-protocol: rolling
+link-workspace-packages: true
+prefer-workspace-packages: true
+
+# Performance optimizations
+enable-pre-post-scripts: true
+shamefully-hoist: false
+strict-peer-dependencies: true
+
+# Security settings
+audit-level: moderate
+fund: false

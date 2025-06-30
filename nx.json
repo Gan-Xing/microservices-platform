@@ -1,0 +1,249 @@
+{
+  "$schema": "./node_modules/nx/schemas/nx-schema.json",
+  "version": 2,
+  "workspaceLayout": {
+    "appsDir": "apps",
+    "libsDir": "libs"
+  },
+  "defaultProject": "api-gateway-service",
+  "namedInputs": {
+    "default": ["{projectRoot}/**/*", "sharedGlobals"],
+    "production": [
+      "default",
+      "!{projectRoot}/**/?(*.)+(spec|test).[jt]s?(x)?(.snap)",
+      "!{projectRoot}/tsconfig.spec.json",
+      "!{projectRoot}/jest.config.[jt]s",
+      "!{projectRoot}/.eslintrc.json",
+      "!{projectRoot}/**/*.stories.@(js|jsx|ts|tsx|mdx)"
+    ],
+    "sharedGlobals": []
+  },
+  "targetDefaults": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["production", "^production"],
+      "cache": true,
+      "executor": "@nx/webpack:webpack",
+      "options": {
+        "outputPath": "dist/{projectName}",
+        "main": "{projectRoot}/src/main.ts",
+        "tsConfig": "{projectRoot}/tsconfig.app.json",
+        "assets": ["{projectRoot}/src/assets"],
+        "isolatedConfig": true,
+        "webpackConfig": "{projectRoot}/webpack.config.js"
+      },
+      "configurations": {
+        "production": {
+          "optimize": true,
+          "extractLicenses": true,
+          "inspect": false,
+          "fileReplacements": [
+            {
+              "replace": "{projectRoot}/src/environments/environment.ts",
+              "with": "{projectRoot}/src/environments/environment.prod.ts"
+            }
+          ]
+        }
+      }
+    },
+    "serve": {
+      "executor": "@nx/js:node",
+      "defaultConfiguration": "development",
+      "options": {
+        "buildTarget": "{projectName}:build"
+      },
+      "configurations": {
+        "development": {
+          "buildTarget": "{projectName}:build:development"
+        },
+        "production": {
+          "buildTarget": "{projectName}:build:production",
+          "args": ["--env", "production"]
+        }
+      }
+    },
+    "lint": {
+      "inputs": ["default", "{workspaceRoot}/.eslintrc.json"],
+      "cache": true,
+      "executor": "@nx/eslint:lint",
+      "outputs": ["{options.outputFile}"],
+      "options": {
+        "lintFilePatterns": ["{projectRoot}/**/*.ts"]
+      }
+    },
+    "test": {
+      "inputs": ["default", "^production", "{workspaceRoot}/jest.preset.js"],
+      "cache": true,
+      "executor": "@nx/jest:jest",
+      "outputs": ["{workspaceRoot}/coverage/{projectName}"],
+      "options": {
+        "jestConfig": "{projectRoot}/jest.config.ts",
+        "passWithNoTests": true
+      },
+      "configurations": {
+        "ci": {
+          "ci": true,
+          "coverage": true
+        }
+      }
+    },
+    "e2e": {
+      "inputs": ["default", "^production"],
+      "cache": true,
+      "executor": "@nx/cypress:cypress",
+      "options": {
+        "cypressConfig": "{projectRoot}/cypress.config.ts",
+        "testingType": "e2e"
+      },
+      "configurations": {
+        "production": {
+          "devServerTarget": "{projectName}:serve:production"
+        }
+      }
+    }
+  },
+  "generators": {
+    "@nx/nest": {
+      "application": {
+        "linter": "eslint",
+        "unitTestRunner": "jest"
+      },
+      "library": {
+        "linter": "eslint",
+        "unitTestRunner": "jest"
+      }
+    }
+  },
+  "tasksRunnerOptions": {
+    "default": {
+      "runner": "nx/tasks-runners/default",
+      "options": {
+        "cacheableOperations": ["build", "lint", "test", "e2e"],
+        "parallel": 4,
+        "runtimeCacheInputs": ["node -v"]
+      }
+    }
+  },
+  "plugins": [],
+  "projects": {
+    "api-gateway-service": {
+      "name": "api-gateway-service",
+      "root": "apps/api-gateway-service",
+      "sourceRoot": "apps/api-gateway-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "auth-service": {
+      "name": "auth-service", 
+      "root": "apps/auth-service",
+      "sourceRoot": "apps/auth-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "rbac-service": {
+      "name": "rbac-service",
+      "root": "apps/rbac-service", 
+      "sourceRoot": "apps/rbac-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "user-management-service": {
+      "name": "user-management-service",
+      "root": "apps/user-management-service",
+      "sourceRoot": "apps/user-management-service/src", 
+      "projectType": "application",
+      "targets": {}
+    },
+    "tenant-management-service": {
+      "name": "tenant-management-service",
+      "root": "apps/tenant-management-service",
+      "sourceRoot": "apps/tenant-management-service/src",
+      "projectType": "application", 
+      "targets": {}
+    },
+    "notification-service": {
+      "name": "notification-service",
+      "root": "apps/notification-service",
+      "sourceRoot": "apps/notification-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "file-storage-service": {
+      "name": "file-storage-service",
+      "root": "apps/file-storage-service",
+      "sourceRoot": "apps/file-storage-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "monitoring-service": {
+      "name": "monitoring-service",
+      "root": "apps/monitoring-service",
+      "sourceRoot": "apps/monitoring-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "audit-service": {
+      "name": "audit-service",
+      "root": "apps/audit-service", 
+      "sourceRoot": "apps/audit-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "scheduler-service": {
+      "name": "scheduler-service",
+      "root": "apps/scheduler-service",
+      "sourceRoot": "apps/scheduler-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "message-queue-service": {
+      "name": "message-queue-service",
+      "root": "apps/message-queue-service",
+      "sourceRoot": "apps/message-queue-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "cache-service": {
+      "name": "cache-service",
+      "root": "apps/cache-service",
+      "sourceRoot": "apps/cache-service/src",
+      "projectType": "application",
+      "targets": {}
+    },
+    "shared": {
+      "name": "shared",
+      "root": "libs/shared",
+      "sourceRoot": "libs/shared/src",
+      "projectType": "library",
+      "targets": {}
+    },
+    "common": {
+      "name": "common",
+      "root": "libs/common",
+      "sourceRoot": "libs/common/src",
+      "projectType": "library",
+      "targets": {}
+    },
+    "types": {
+      "name": "types",
+      "root": "libs/types",
+      "sourceRoot": "libs/types/src",
+      "projectType": "library",
+      "targets": {}
+    },
+    "testing": {
+      "name": "testing",
+      "root": "libs/testing",
+      "sourceRoot": "libs/testing/src",
+      "projectType": "library",
+      "targets": {}
+    },
+    "migrations": {
+      "name": "migrations",
+      "root": "libs/migrations",
+      "sourceRoot": "libs/migrations/src",
+      "projectType": "library",
+      "targets": {}
+    }
+  }
+}

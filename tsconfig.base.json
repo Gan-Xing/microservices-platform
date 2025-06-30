@@ -1,0 +1,62 @@
+{
+  "compileOnSave": false,
+  "compilerOptions": {
+    "rootDir": ".",
+    "sourceMap": true,
+    "declaration": false,
+    "moduleResolution": "node",
+    "emitDecoratorMetadata": true,
+    "experimentalDecorators": true,
+    "importHelpers": true,
+    "target": "ES2022",
+    "module": "ESNext",
+    "lib": ["ES2022"],
+    "skipLibCheck": true,
+    "skipDefaultLibCheck": true,
+    "strict": true,
+    "strictNullChecks": true,
+    "noImplicitAny": true,
+    "noImplicitReturns": true,
+    "noImplicitThis": true,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "exactOptionalPropertyTypes": false,
+    "noImplicitOverride": true,
+    "noPropertyAccessFromIndexSignature": false,
+    "noUncheckedIndexedAccess": false,
+    "allowSyntheticDefaultImports": true,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "incremental": true,
+    "baseUrl": ".",
+    "paths": {
+      "@platform/shared": ["libs/shared/src/index.ts"],
+      "@platform/shared/*": ["libs/shared/src/lib/*"],
+      "@platform/common": ["libs/common/src/index.ts"],
+      "@platform/common/*": ["libs/common/src/lib/*"],
+      "@platform/types": ["libs/types/src/index.ts"],
+      "@platform/types/*": ["libs/types/src/lib/*"],
+      "@platform/testing": ["libs/testing/src/index.ts"],
+      "@platform/testing/*": ["libs/testing/src/lib/*"],
+      "@platform/migrations": ["libs/migrations/src/index.ts"],
+      "@platform/migrations/*": ["libs/migrations/src/lib/*"]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.js"
+  ],
+  "exclude": [
+    "node_modules",
+    "tmp",
+    "dist",
+    "coverage",
+    ".nx"
+  ],
+  "ts-node": {
+    "esm": true,
+    "experimentalSpecifierResolution": "node"
+  }
+}

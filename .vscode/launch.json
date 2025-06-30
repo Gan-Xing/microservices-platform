@@ -1,0 +1,97 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug API Gateway",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/apps/api-gateway-service/src/main.ts",
+      "runtimeArgs": ["--nolazy", "-r", "ts-node/register"],
+      "sourceMaps": true,
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "TS_NODE_PROJECT": "${workspaceFolder}/apps/api-gateway-service/tsconfig.app.json"
+      },
+      "console": "integratedTerminal",
+      "restart": true,
+      "protocol": "inspector",
+      "port": 9229,
+      "autoAttachChildProcesses": true
+    },
+    {
+      "name": "Debug Auth Service",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/apps/auth-service/src/main.ts",
+      "runtimeArgs": ["--nolazy", "-r", "ts-node/register"],
+      "sourceMaps": true,
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "TS_NODE_PROJECT": "${workspaceFolder}/apps/auth-service/tsconfig.app.json"
+      },
+      "console": "integratedTerminal",
+      "restart": true,
+      "protocol": "inspector",
+      "port": 9230
+    },
+    {
+      "name": "Debug User Management",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/apps/user-management-service/src/main.ts",
+      "runtimeArgs": ["--nolazy", "-r", "ts-node/register"],
+      "sourceMaps": true,
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "TS_NODE_PROJECT": "${workspaceFolder}/apps/user-management-service/tsconfig.app.json"
+      },
+      "console": "integratedTerminal",
+      "restart": true,
+      "protocol": "inspector",
+      "port": 9231
+    },
+    {
+      "name": "Debug Current Service",
+      "type": "node",
+      "request": "launch",
+      "program": "${file}",
+      "runtimeArgs": ["--nolazy", "-r", "ts-node/register"],
+      "sourceMaps": true,
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "restart": true,
+      "protocol": "inspector"
+    },
+    {
+      "name": "Jest Test Current File",
+      "type": "node",
+      "request": "launch",
+      "program": "${workspaceFolder}/node_modules/.bin/jest",
+      "args": ["${relativeFile}", "--runInBand", "--no-cache"],
+      "cwd": "${workspaceFolder}",
+      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/.env",
+      "internalConsoleOptions": "neverOpen"
+    },
+    {
+      "name": "Docker: Attach to Node",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "address": "localhost",
+      "localRoot": "${workspaceFolder}",
+      "remoteRoot": "/app",
+      "protocol": "inspector"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Debug Core Services",
+      "configurations": [
+        "Debug API Gateway",
+        "Debug Auth Service", 
+        "Debug User Management"
+      ]
+    }
+  ]
+}
